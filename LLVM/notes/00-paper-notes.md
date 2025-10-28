@@ -1,5 +1,7 @@
 # Paper notes
 
+* [skip to thesis-related papers](#thesis-related-papers)
+
 # MicroExecution
 * [source](https://patricegodefroid.github.io/public_psfiles/icse2014.pdf)
 
@@ -106,4 +108,42 @@
 - interesting mentions:
     - **stack hashing** - never heard of this technique, last n stack entries hashed
     - avoidance of stack and heap pointers (high number of false-positive predicates) 
-    
+
+
+Thesis-related papers
+---
+* the papers listed here were studied after the initial implementation of the tool set
+
+# DMTCP: Transparent Checkpointing for Cluster Computations and the Desktop
+* [source](https://dmtcp.github.io/papers/dmtcp.pdf)
+
+- an approach for taking snapshots in multi-threaded environment
+- relatively fast checkpointing, negligible runtime overhead
+- supports elements used by the project: mmapped-memory, mutexes/semaphores, UNIX domain sockets
+- mentions Berkeley lab checkpoint/restart (BLCR) for Linux - seems unmaintained now
+    - simpler but "the original"?
+- `LD_PRELOAD` usage: TODO? - try to inject `hooklib` into programs via preload to make build modification of target binary simpler...
+- *aside* - *broadcast trees* to implement global (synchronization) barriers?
+- overall - a promising candidate **even for the single-thread (current) implementation**
+    - more reproducible - we could possibly use capture phase's checkpoint to start "testing" from the exact point the checkpoint was made
+
+# Improving the Efficiency of Fuzz Testing Using Checkpointing
+* [source](https://www.research-collection.ethz.ch/server/api/core/bitstreams/d8110cac-d44f-418f-ac50-a26c6936491c/content)
+
+- related to DMTCP
+- scanned for issues/usage constraints, the thesis itself is rather old and short
+
+# Programming and Testing Support for Drone Based Applications
+* [source](https://core.ac.uk/download/pdf/161850147.pdf)
+
+- related to DMTCP
+- mentions incremental backups via "HBICT module which [works seamlessly with DMTCP](https://hbict.sourceforge.net/dmtcp.html)"
+    - last update 2014?
+
+# Extended Batch Sessions and Three-Phase Debugging: Using DMTCP to Enhance the Batch Environment
+* [source](https://www.ccs.neu.edu/home/gene/papers/xsede16.pdf)
+
+* overall a nice, concise piece
+* reminded me of the idea of **deterministic record/replay** - vaguely similar to what we might be doing here
+    * another technique worth mentioning (for nondet. issues): *repeating a restart from the checkpoint enough times will eventually produce the bug again*
+* usage of **DMTCP plugins** for function wrapper creation (I suspect this is a dynamic linking thing?)
