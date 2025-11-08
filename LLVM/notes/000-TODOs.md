@@ -1,5 +1,28 @@
 # TODO:
 
+**based on** [Future work](#future-work) of the original [research project](#original-research-project-progress-tracker)
+
+* investigate exceptions - try to implement
+    * look at the noted implementation 
+    * add e2e-test that fails
+    * quick prototype in plugin
+* investigate `protobuf` as a serialization tool
+    * payloads become [len + protobuff-part], types encoded in the protobuf schema?
+    * performance compared to current approach? - memory, cpu
+        * how large of a tradeoff is this against dependency delegation and overall better maintainability bring? 
+    * usability?
+    * usable from the Rust `llcap-server`?
+* decide on the overall approach of tackling multithreading
+    * experimentation with the role swap is easier to implement
+    * runtime snapshots will bring more usability (easier restart, ensured program state reconstruction)
+* addres config mess
+    * look at defaults - required/nonrequired existence of directories/files
+    * overall architecture - delegation of the option values further down the line
+    * config architecture - what can be abstracted into configs
+
+Original Research Project progress tracker:
+---
+
 * ~~prepare examples for function tracing prototype~~
 * ~~prepare examples for parameter capture prototype~~
 * ~~think about non-deterministic traces~~

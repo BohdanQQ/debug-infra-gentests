@@ -11,6 +11,8 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <ostream>
+#include <stdbool.h>
 #include <string>
 #include <sys/poll.h>
 #include <sys/socket.h>
@@ -446,10 +448,16 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   }
 }
 
+_Bool hook_test_is_executing(uint32_t module_id, uint32_t fn_id) {
+  // The one and zero result is really crucial here as the result is also used
+  // in the LLVM IR plugin
+  return in_testing_mode() && in_testing_fork() &&
+      is_fn_under_test(module_id, fn_id) ? 1 : 0;
+}
+
 static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
                                     bool exception) {
-  if (!in_testing_mode() || !in_testing_fork() ||
-      !is_fn_under_test(module_id, fn_id)) {
+  if (!hook_test_is_executing(module_id, fn_id)) {
     return;
   }
 

@@ -122,7 +122,7 @@ Thesis-related papers
 - supports elements used by the project: mmapped-memory, mutexes/semaphores, UNIX domain sockets
 - mentions Berkeley lab checkpoint/restart (BLCR) for Linux - seems unmaintained now
     - simpler but "the original"?
-- `LD_PRELOAD` usage: TODO? - try to inject `hooklib` into programs via preload to make build modification of target binary simpler...
+- `LD_PRELOAD` usage: ~~TODO~~? - try to inject `hooklib` into programs via preload to make build modification of target binary simpler... (while compiling... this is an entirely wrong approach) 
 - *aside* - *broadcast trees* to implement global (synchronization) barriers?
 - overall - a promising candidate **even for the single-thread (current) implementation**
     - more reproducible - we could possibly use capture phase's checkpoint to start "testing" from the exact point the checkpoint was made

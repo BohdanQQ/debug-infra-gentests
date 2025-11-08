@@ -932,3 +932,42 @@ It also reacts to the *designated exit code* and tries to read the message (if d
 
 Wrap the function in a `try {} finally {}` block on the LLVM IR level. This can be seen in the
 [LLVM example](https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/examples/ExceptionDemo/ExceptionDemo.cpp#L1075).
+
+# November
+
+* exception mechanism tricky - capture + testing phase is merged
+    * simply catching + rethrowing in non-test mode is infeasible from my experiments (skill issue?)
+    * current version - exposes the information whethere we're running a test to the LLVM IR pass
+        * use runtime checks of this information to split execution:
+
+A general call inside the target function:
+
+```c++
+auto result = foo();
+```
+
+becomes (if IR cannot guarantee non-throwing calls):
+
+```c++
+auto is_testing = exposed_testing_info();
+auto res1, res2;
+// on IR level, creates 2 basic blocks with 
+// conditional branching based on the exposed "are we testing?"
+if (is_testing) {
+    try {
+        res1 = foo();
+    } catch (...) {
+        hook_epilogue_exception_terminate();
+        // unreachable, the above terminates
+    }
+} else {
+    // not in testing mode, => capturing / not in the test fork yet
+    // we don't want to modify the flow of the program at this point
+    res2 = foo();
+}
+
+
+auto result = is_testing ? res1 : res2;
+
+// rest of the function
+```

@@ -8,33 +8,44 @@
 #include "typeids.h"
 #include "utility.hpp"
 #include "llvm/ADT/APInt.h"
+#include <llvm/ADT/ArrayRef.h>
 #include "llvm/ADT/SmallVector.h"
 #include <llvm/ADT/StringRef.h>
+#include <llvm/ADT/Twine.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/Demangle/Demangle.h>
+#include <llvm/IR/Argument.h>
 #include "llvm/IR/BasicBlock.h"
+#include <llvm/IR/Constant.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/EHPersonalities.h>
 #include "llvm/IR/Function.h"
 #include <llvm/IR/GlobalVariable.h>
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instruction.h"
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/LLVMContext.h>
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
 #include "llvm/Pass.h"
 #include <llvm/Passes/OptimizationLevel.h>
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/raw_ostream.h"
+#include <llvm/TargetParser/Triple.h>
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include <array>
 #include <cstdint>
 #include <fstream>
 #include <ios>
+#include <memory>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -107,13 +118,17 @@ struct SFnUidConstants {
 
 // inserts a call to the string-specified function
 // and supplies the Module and Function ID to it (in this order)
-void insertInfraFnCall(IRBuilder<> &Builder, Module &M, StringRef Name,
-                       const common::SFnUidConstants C) {
+CallInst* insertInfraFnCall(IRBuilder<> &Builder, Module &M, StringRef Name,
+                       const common::SFnUidConstants C, Type* RetT = nullptr) {
+  if (RetT == nullptr) {
+    RetT = Type::getVoidTy(M.getContext());
+  }
+  
   auto Callee = M.getOrInsertFunction(
       Name,
-      FunctionType::get(Type::getVoidTy(M.getContext()),
+      FunctionType::get(RetT,
                         {C.module->getType(), C.function->getType()}, false));
-  Builder.CreateCall(Callee, {C.module, C.function});
+  return Builder.CreateCall(Callee, {C.module, C.function});
 }
 } // namespace
 } // namespace common
@@ -183,20 +198,139 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 
 namespace argCapture {
 
+// splits a CallInst into a conditional call/invoke
+// this split ensures that during capture, the control flow (esp. the fragile exception mechanism)
+// is not altered "too much"
+// in testing mode, the captured exception simply causes the program to exit early 
+void splitCallInsn(Function &Fn, Module &M, CallInst& Insn, 
+  const common::SFnUidConstants C, FunctionCallee* EpilogueExceptionFn,
+  CallInst* Condition) {
+  // FIXME: what if we're instrumenting multiple functions?!
+  //        (multiple calls to Foo within Bar should be fine - pointers to CallInsts should be unique)
+  static std::set<CallInst*> sSeen;
+  if (Insn.getCalledFunction()->isIntrinsic() || Insn.getCalledFunction()->hasFnAttribute(Attribute::NoUnwind) || sSeen.contains(&Insn)) {
+    return;
+  }
+  auto& Ctx = Fn.getContext();
+  // first, split at the call - this creates 2 BBs = new BB with isns after the call, the other containing insns up to (and incl.) the call + a jump into new BB
+  // ++iterator is allowed - call is not a terminator -> there has to be at least one other insn
+  auto* NewBB = Insn.getParent()->splitBasicBlock(++Insn.getIterator());
+  auto* MergeBB = BasicBlock::Create(Ctx, "mergebb", &Fn);
+  // now we create a BB with just invoke + jump to NewBB (or an exception)
+  auto* InvokeBB = BasicBlock::Create(Ctx, "testjmp", &Fn);
+  auto* ExceptionBB = BasicBlock::Create(Ctx, "testexc", &Fn);
+  std::vector<Value*> Args(Insn.arg_size());
+  for(unsigned int AIdx = 0; AIdx < Insn.arg_size(); AIdx++) {
+    auto* Arg = Insn.getArgOperand(AIdx);
+    Args[AIdx] = Arg;
+  }
+
+  llvm::errs() << "Insert hijack " << Insn.getCalledFunction()->getName() << "\n";
+  sSeen.insert(&Insn);
+  InvokeInst * Invoke = nullptr;
+  { 
+    llvm::IRBuilder<> ExcBuilder(Ctx);
+    ExcBuilder.SetInsertPoint(&*ExceptionBB);
+    Type *CaughtResultFieldTypes[] = {
+      ExcBuilder.getPtrTy(),
+      ExcBuilder.getInt32Ty()
+    };
+          
+    // Create our landingpad result type
+    auto* OurCaughtResultType = llvm::StructType::get(Ctx,
+                                              llvm::ArrayRef<llvm::Type *>(CaughtResultFieldTypes));
+    auto* Land = ExcBuilder.CreateLandingPad(OurCaughtResultType, 0);
+    Land->setCleanup(false);
+    // null clause === catch-all
+    Land->addClause(ConstantPointerNull::get(ExcBuilder.getPtrTy()));
+
+    CallInst *CallInsn = CallInst::Create(*EpilogueExceptionFn,
+        {C.module, C.function});
+    ExcBuilder.Insert(CallInsn);
+    // TODO?
+    ExcBuilder.CreateUnreachable();
+    
+    if (!Fn.hasPersonalityFn()) {
+      // not working - gives gcc_personality... need gxx
+      // auto triple =Fn.getParent()->getTargetTriple();
+      // auto Personality = getEHPersonalityName(llvm::getDefaultEHPersonality(triple));
+      
+      auto *PersonalityTy = FunctionType::get(
+        Type::getInt32Ty(Ctx),
+        {Type::getInt32Ty(Ctx), Type::getInt32Ty(Ctx),
+          Type::getInt64Ty(Ctx), ExcBuilder.getPtrTy()},
+          false);
+            
+      auto PersCallee = M.getOrInsertFunction("__gxx_personality_v0", PersonalityTy);
+        
+        Fn.setPersonalityFn(cast<Function>(PersCallee.getCallee()));
+    }
+
+    Invoke = InvokeInst::Create(Insn.getFunctionType(), Insn.getCalledFunction(), MergeBB, &(*ExceptionBB), Args, "");
+    Invoke->insertInto(InvokeBB, InvokeBB->begin());
+  }
+  
+  // now we create a BB with just the original call + jump to NewBB
+  // mark down parent of the original call instruction for later
+  auto* OrigSplitBB = Insn.getParent();
+  auto* OrigCallBB = BasicBlock::Create(Ctx, "origcallbb", &Fn);
+  {
+    IRBuilder<> Builder(Ctx);
+    Builder.SetInsertPoint(OrigCallBB);
+    Insn.removeFromParent();
+    Builder.Insert(&Insn);
+    Builder.CreateBr(MergeBB);
+  }
+  // now, we create a condition based on the testing mode Condition - if true, we jump to the
+  // invoke, if false, we perform the call (as if nothing happened)
+  auto* ConditionInst = BranchInst::Create(OrigCallBB, InvokeBB, Condition);
+  // now, merge the results of the two branches in the merge BB, replace the values and point it to NewBB
+  IRBuilder<> Builder(Ctx);
+  Builder.SetInsertPoint(MergeBB);
+  // create merge node
+  auto* MergePhi = PHINode::Create(Insn.getType(), 2);
+  // replace all results of the original call with the result of the merge
+  Insn.replaceAllUsesWith(MergePhi);
+  // populate the merge with the call and invoke
+  MergePhi->addIncoming(&Insn, OrigCallBB);
+  MergePhi->addIncoming(Invoke, InvokeBB);
+  Builder.Insert(MergePhi);
+  
+  Builder.CreateBr(NewBB);
+  // now, we locate the terminator of the original block which must be an unconditional jump
+  // (according to splitBasicBlock) and replace it with our condition
+  ReplaceInstWithInst(OrigSplitBB->getTerminator(), ConditionInst);
+  // we inserted a conditional call/invoke
+}
+
+// BasicBlock* insertHijackBB(Function &Fn, const Twine& Name, FunctionCallee& EpilogueCallee) {
+//   auto* BB = BasicBlock::Create(Fn.getContext(), Name, std::addressof(Fn));
+//   // call to hijack 
+//   CallInst *CallInsn = CallInst::Create(EpilogueCallee);
+//   CallInsn->insertInto(BB, BB->end());
+//   return BB;
+// }
+
 // inserts test-terminating call to hooklib before every potentially-exitting IR
 // instruction this includes exception-related instructions
 //
 // WARNING: exceptions are only partially covered
 void insertTestEpilogueHook(Function &Fn, Module &M,
                             const common::SFnUidConstants C) {
-  auto Types = {C.module->getType(), C.function->getType()};
+    auto Types = {C.module->getType(), C.function->getType()};
+
+  auto& Ctx = M.getContext();
+  llvm::IRBuilder<> TestBuilder(Ctx);
+  TestBuilder.SetInsertPoint(&Fn.front().front());
+  auto* TestCallRes = common::insertInfraFnCall(TestBuilder, M, "hook_test_is_executing", C, Type::getInt1Ty(Ctx));
+                
   FunctionCallee EpilogueCallFn = M.getOrInsertFunction(
       "hook_test_epilogue",
-      FunctionType::get(Type::getVoidTy(M.getContext()), Types, false));
+      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
 
   FunctionCallee EpilogueExceptionFn = M.getOrInsertFunction(
       "hook_test_epilogue_exc",
-      FunctionType::get(Type::getVoidTy(M.getContext()), Types, false));
+      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
   // we need to walk all the basic blocks, look for ret, resume, catchswitch,
   // cleanupret instructions and place a call before them
 
@@ -230,16 +364,27 @@ void insertTestEpilogueHook(Function &Fn, Module &M,
     for (; I != E; ++I) {
       // increment skip offset
       ++ToSkip;
-      if (I->getOpcode() == Instruction::Ret ||
-          I->getOpcode() == Instruction::Resume) {
+      if (bool IsResume = I->getOpcode() == Instruction::Resume; 
+      IsResume || I->getOpcode() == Instruction::Ret) {
         CallInst *CallInsn = CallInst::Create(
-            (I->getOpcode() == Instruction::Resume ? EpilogueExceptionFn
-                                                   : EpilogueCallFn),
+            (IsResume ? EpilogueExceptionFn : EpilogueCallFn),
             {C.module, C.function});
+        I->replaceAllUsesWith(CallInsn);
         CallInsn->insertBefore(I->getIterator());
         // add an instruction to skip -> we should skip past the Ret/Resume
         ++ToSkip;
         // iterators are invalidated, we must loop again
+        break;
+      }
+
+      if(I->getOpcode() == Instruction::Call) {
+        auto& Insn = llvm::cast<CallInst>(*I);
+        if (Insn.getCalledFunction()->getName().starts_with("hook_")) {
+          continue;
+        }
+        splitCallInsn(Fn, M, Insn, C, &EpilogueExceptionFn, TestCallRes);
+        // does this approach still work when we perform the split?
+        ++ToSkip;
         break;
       }
 
@@ -253,6 +398,20 @@ void insertTestEpilogueHook(Function &Fn, Module &M,
         outs()
             << "CleanupRet instruction encountered, this is unhandled yet!\n";
         continue;
+      }
+
+      if (I->getOpcode() == Instruction::CatchRet) {
+        // FIXME: useless?
+        // outs()
+        //     << "HIJACK: CatchRet!\n";
+        // auto& Insn = llvm::cast<CatchReturnInst>(*I);
+        // std::string BBName = (Insn.getStableDebugLoc()->getFilename() + "@" + std::to_string(Insn.getStableDebugLoc()->getLine())).str(); 
+        // auto* BB = insertHijackBB(Fn, BBName, EpilogueExceptionFn);
+        // auto* NewInsn = CatchReturnInst::Create(Insn.getCatchPad(), BB);
+        // NewInsn->insertBefore(Insn.getIterator());
+        // // theoretically also we could try Insn->replaceAllUsesWith(NewInsn)
+        // ++ToSkip;
+        break;
       }
     }
   }

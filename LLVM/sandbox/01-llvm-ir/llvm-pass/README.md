@@ -22,3 +22,7 @@ To use the plugin, you have to modify the build flags of your files. This can be
 The plugin is programmed defensively. For example, the module maps directory should be empty before recompilation of the call tracing phase, as collisions of module file names are considered errors. Beware that the plugin may cause the compilation to fail.
 
 Please check the `namespace args` in [`pass.cpp`](./src/pass.cpp) for arguments and their usage, or refer to the example provided above.
+
+## Debugging tips
+
+Use `-mllvm -print-before-all` to dump IR before each stage.
