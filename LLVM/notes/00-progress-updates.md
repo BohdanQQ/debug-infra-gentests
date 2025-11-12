@@ -971,3 +971,75 @@ auto result = is_testing ? res1 : res2;
 
 // rest of the function
 ```
+
+
+Output comparison on e2e test `testbin-arg-replacement-unc-exc` - 4th argument packet always causes exception, but only in one path, it is being caught:
+
+Bottom line: If code is NOT `pass` or `exception`, the code continued to execute beyond the tested function - this instrumentation is designed to avoid this.
+
+```log
+P | [main] Module ID | Function ID |  Call  | Packet | Result
+P | [main]  553E8EC8 |  01000000   |   1    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   2    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   3    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   4    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   4    | Exit(0)
+P | [main]  553E8EC8 |  01000000   |   5    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   4    | Signal(6)
+P | [main] ---------------------------------------------------------------
+P | [main] Exiting...
+```
+
+(Exit(0) was Exception before my changes, to be investigated)
+
+New:
+
+```log
+P | [main] ---------------------------------------------------------------
+P | [main] Test results (25): 
+P | [main] Module ID | Function ID |  Call  | Packet | Result
+P | [main]  553E8EC8 |  01000000   |   1    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   2    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   3    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   4    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   5    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   4    | Exception
+P | [main] ---------------------------------------------------------------
+```
