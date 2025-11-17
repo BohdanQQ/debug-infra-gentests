@@ -37,7 +37,7 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id);
 /*
 Whether the specified function is being tested **right now**.
 */
-bool hook_test_is_executing(uint32_t module_id, uint32_t fn_id);
+int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id);
 
 /*
 A testing hook.

@@ -68,7 +68,14 @@ function run-tests-with-buffers {
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-this-structarg" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
   run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
+  # exceptions with auto-generated cleanup calls, wraps without return values
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc" "test_target" 5 "$Size" "$Count"
+  # the above with return values
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-rv" "test_target" 5 "$Size" "$Count"
+  # exceptions without cleanup calls, inner (exception-throwing) calls with a return value
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call-rv" "test_target" 5 "$Size" "$Count"
+  # exceptions without cleanup calls, inner (exception-throwing) calls without a return value
+  run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call" "test_target" 5 "$Size" "$Count"
 }
 
 # the defaults of the llcap-server
