@@ -147,3 +147,41 @@ Thesis-related papers
 * reminded me of the idea of **deterministic record/replay** - vaguely similar to what we might be doing here
     * another technique worth mentioning (for nondet. issues): *repeating a restart from the checkpoint enough times will eventually produce the bug again*
 * usage of **DMTCP plugins** for function wrapper creation (I suspect this is a dynamic linking thing?)
+
+# Agamotto: Accelerating Kernel Driver Fuzzing with Lightweight Virtual Machine Checkpoints
+
+* identifies repeated the replay problem of repeated evaluation
+    * mentions the fork approach (as used in fuzzers)
+* uses native vritual machines and a "clever" memory reconstruction approach
+    * combines 2 fuzzers - overall very complex system
+    * **AFL**: according to my limited research, AFL can do very similar things to what we're doing here ("Deferred Initialization", uses LLVM passes, `fork`)
+* some similarity with our approach: disabled checkpointing in modified runs
+
+# Isolating and Understading Concurrency Errors Using Reconstructed Execution Fragments
+
+* machine learning (and other statistical methods) recognizes problematic "reconstructions" (interactions between threads on data)
+* overhead 5x and more
+* shared data access timestamped and logged locally for each/some LoC
+    * reconstruction created from a communication graph - chapter 3.2 unclear to me
+* uses Intel's Pin for detection/timestamping (infeasible for us - replacement of argument values)
+    * bookeeping around addresses (last writer, ...)
+    * design difference: this work is observing-only
+* case study is hand-wavy IMO - we fixed issue using our tool, didn't observe a MT issue in hundreds of runs -> bug was fixed using our tool
+
+# Reproducing Concurrency Failures from Crash Stacks
+
+* "... crash stacks, which commonly summarize the conditions of field failures" - No?
+* thread safety checking severly limited only to classes (Java?)
+* above is justified using "recent studies" that show "56-70% of concurrency failures lead to crashes or hangs that usually generate a crash stack" (meh?)
+* claims that stack trace allows for "easy" detection of classes that cause concurrency bugs - this is highly debatable, especially in production environments which they mention
+* only simulates interplay of 2 threads
+* uses the stack trace to create a piece of code that reproduces the violation
+    * explores interleavings
+
+# Symbolic Execution of Multithreaded Programs from Arbitrary Program Contexts
+
+* based on KLEE (see [another project based on KLEE](#under-constrained-symbolic-execution))
+    * integer<->pointer conversions not fully supported by
+* seems out of our scope
+    * LLVM IR interepretation
+* main idea: symbilic execution starts at any point of the code (tricky part: establishing the initial context)
