@@ -149,6 +149,11 @@ pub enum Stage {
     #[arg(long)]
     global_timeout: Option<u16>,
 
+    /// Optional path to a final testing report. Enconding is determined by the file extension.
+    /// Supported formats: .txt/.out/.log for plain text and .json for JSON  
+    #[arg(long)]
+    report: Option<PathBuf>,
+
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
