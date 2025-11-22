@@ -144,6 +144,10 @@ fi
 # ModuleID|FunctionID|Call|Packet|Result
 Output=$(echo "$Output" | cut -d']' -f 2- | grep ".*|.*|.*" | tr -d '[:blank:]')
 
+if [[ $LLCAP_ECHO_OUT ]]; then
+  echo "$Output"
+fi
+
 if [[ "$OutputTestScriptDir" != "" ]]
 then
   echo "!!! Testing Outputs"
