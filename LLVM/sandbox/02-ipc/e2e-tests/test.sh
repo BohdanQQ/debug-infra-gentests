@@ -136,9 +136,17 @@ Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity -s "$L
  test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
  -o "$TestOutputsDir" "$InstrumentedBin")
 
+if [[ $LLCAP_ECHO_OUT ]]; then
+  echo "$Output"
+fi
+
 # transform output to a |-separated table with a single-line header
 # ModuleID|FunctionID|Call|Packet|Result
 Output=$(echo "$Output" | cut -d']' -f 2- | grep ".*|.*|.*" | tr -d '[:blank:]')
+
+if [[ $LLCAP_ECHO_OUT ]]; then
+  echo "$Output"
+fi
 
 if [[ "$OutputTestScriptDir" != "" ]]
 then

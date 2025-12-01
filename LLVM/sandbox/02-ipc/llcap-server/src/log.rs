@@ -1,4 +1,6 @@
-use std::sync::atomic::AtomicU8;
+use std::{path::PathBuf, sync::atomic::AtomicU8};
+
+use tokio::{fs::File, io::AsyncWriteExt};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LogLevel {
@@ -50,6 +52,27 @@ static LOG_TRACE: Log = Log {
 };
 
 static LOG_LEVEL: AtomicU8 = AtomicU8::new(0);
+
+pub struct ResultLogger {
+  result_log: LogStrategy,
+}
+impl ResultLogger {
+  pub fn new(result_log: LogStrategy) -> Self {
+    Self { result_log }
+  }
+
+  pub fn result<T: IntoLogString>(
+    &mut self,
+    msg: &T,
+  ) -> impl Future<Output = Result<(), anyhow::Error>> {
+    self.result_log.put_loggable(msg)
+  }
+
+  pub async fn finish(self) -> anyhow::Result<()> {
+    self.result_log.finish().await?;
+    Ok(())
+  }
+}
 
 pub struct Logger {
   name: String,
@@ -110,6 +133,11 @@ impl Log {
     Logger::new(name)
   }
 
+  pub async fn result_logger(mut strategy: LogStrategy) -> anyhow::Result<ResultLogger> {
+    strategy.put_header().await?;
+    Ok(ResultLogger::new(strategy))
+  }
+
   fn log_level_preamble(lvl: LogLevel) -> &'static str {
     match lvl {
       LogLevel::Critical => "C |",
@@ -129,4 +157,83 @@ impl Log {
   fn log_progress(&self, msg: &str) {
     println!("P | {msg}");
   }
+}
+
+pub enum LogStrategy {
+  StdOut,
+  PlainText(File),
+  Json(File, bool),
+}
+
+impl LogStrategy {
+  pub async fn create(file: &PathBuf) -> anyhow::Result<Self> {
+    let ext = file.extension();
+    match ext {
+      Some(e) if (e == "json") => Self::json(file).await,
+      Some(e) if (e == "txt" || e == "out" || e == "log") => Self::plain_text(file).await,
+      _ => Ok(Self::StdOut),
+    }
+  }
+
+  async fn json(path: &PathBuf) -> anyhow::Result<Self> {
+    let f = File::create(path).await?;
+    Ok(Self::Json(f, true))
+  }
+
+  async fn plain_text(path: &PathBuf) -> anyhow::Result<Self> {
+    let f = File::create(path).await?;
+    Ok(Self::PlainText(f))
+  }
+
+  pub async fn put_header(&mut self) -> anyhow::Result<()> {
+    self
+      .put_str_format(
+        "{ \"results\":\n[",
+        "Module ID | Function ID |  Call  | Packet | Result",
+      )
+      .await?;
+    Ok(())
+  }
+
+  pub async fn finish(mut self) -> anyhow::Result<()> {
+    self.put_str_format("]\n}", "").await
+  }
+
+  async fn put_str_format(&mut self, json_str: &str, stdout_str: &str) -> anyhow::Result<()> {
+    match self {
+      Self::StdOut => {
+        if !stdout_str.is_empty() {
+          self.put_str(stdout_str).await
+        } else {
+          Ok(())
+        }
+      }
+      Self::PlainText(_) => self.put_str(stdout_str).await,
+      Self::Json(_, _) => self.put_str(json_str).await,
+    }?;
+    Ok(())
+  }
+
+  async fn put_str(&mut self, s: &str) -> anyhow::Result<()> {
+    match self {
+      Self::StdOut => println!("{s}"),
+      Self::Json(file, _) | Self::PlainText(file) => {
+        file.write_all(s.as_bytes()).await?;
+      }
+    };
+    Ok(())
+  }
+
+  pub async fn put_loggable<T: IntoLogString>(&mut self, loggable: &T) -> anyhow::Result<()> {
+    let str = loggable.get_log_string(self);
+    self.put_str(&str).await?;
+    if let Self::Json(_, first) = self {
+      *first = false
+    }
+    Ok(())
+  }
+}
+
+pub trait IntoLogString {
+  fn get_log_string(&self, log_strat: &LogStrategy) -> String;
 }

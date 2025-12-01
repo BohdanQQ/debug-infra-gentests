@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass",
+  "command": "/usr/bin/c++ -Dfn_pass_EXPORTS  -std=gnu++20 -fPIC   -fno-rtti -Wall -Wextra -pedantic -Wconversion -o CMakeFiles/fn-pass.dir/src/pass.cpp.o -c /home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/pass.cpp",
+  "file": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/pass.cpp",
+  "output": "CMakeFiles/fn-pass.dir/src/pass.cpp.o"
+},
+{
+  "directory": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass",
+  "command": "/usr/bin/c++ -Dfn_pass_EXPORTS  -std=gnu++20 -fPIC   -fno-rtti -Wall -Wextra -pedantic -Wconversion -o CMakeFiles/fn-pass.dir/src/instrumentation.cpp.o -c /home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/instrumentation.cpp",
+  "file": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/instrumentation.cpp",
+  "output": "CMakeFiles/fn-pass.dir/src/instrumentation.cpp.o"
+},
+{
+  "directory": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass",
+  "command": "/usr/bin/c++ -Dfn_pass_EXPORTS  -std=gnu++20 -fPIC   -fno-rtti -Wall -Wextra -pedantic -Wconversion -o CMakeFiles/fn-pass.dir/src/modMapping.cpp.o -c /home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/modMapping.cpp",
+  "file": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/modMapping.cpp",
+  "output": "CMakeFiles/fn-pass.dir/src/modMapping.cpp.o"
+},
+{
+  "directory": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass",
+  "command": "/usr/bin/c++ -Dfn_pass_EXPORTS  -std=gnu++20 -fPIC   -fno-rtti -Wall -Wextra -pedantic -Wconversion -o CMakeFiles/fn-pass.dir/src/argMapping.cpp.o -c /home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/argMapping.cpp",
+  "file": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/argMapping.cpp",
+  "output": "CMakeFiles/fn-pass.dir/src/argMapping.cpp.o"
+},
+{
+  "directory": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass",
+  "command": "/usr/bin/c++ -Dfn_pass_EXPORTS  -std=gnu++20 -fPIC   -fno-rtti -Wall -Wextra -pedantic -Wconversion -o CMakeFiles/fn-pass.dir/src/verbosity.cpp.o -c /home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/verbosity.cpp",
+  "file": "/home/bohdanqq/source/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass/src/verbosity.cpp",
+  "output": "CMakeFiles/fn-pass.dir/src/verbosity.cpp.o"
+}
+]

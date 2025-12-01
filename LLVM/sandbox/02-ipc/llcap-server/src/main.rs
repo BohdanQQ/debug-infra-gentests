@@ -30,11 +30,12 @@ use stages::{
 };
 
 use crate::{
+  log::LogStrategy,
   modmap::NumFunUid,
   shmem_capture::{TracingInfra, send_call_tracing_metadata},
   stages::{
     common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
-    testing::{CallIndexT, PacketIndexT, TestJobParams, TestOutputPathGen, TestStatus, test_job},
+    testing::{LogResult, TestJobFailure, TestJobParams, TestOutputPathGen, TestStatus, test_job},
   },
 };
 
@@ -60,7 +61,8 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
 
 #[tokio::main()]
 async fn main() -> Result<()> {
-  let lg = Log::get("main");
+  const LOGGER_NAME: &str = "main";
+  let lg = Log::get(LOGGER_NAME);
   let cli = Cli::try_parse()?;
   Log::set_verbosity(cli.verbose);
   lg.progress(format!("Verbosity: {}", cli.verbose));
@@ -194,7 +196,12 @@ async fn main() -> Result<()> {
       global_timeout,
       command,
       inspect_packets: inspect_packet,
+      report,
     } => {
+      let log_out = match report {
+        None => LogStrategy::StdOut,
+        Some(x) => LogStrategy::create(&x).await?,
+      };
       let command = Arc::new(command);
       lg.progress("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
@@ -301,46 +308,55 @@ async fn main() -> Result<()> {
       lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
-
-      lg.progress("---------------------------------------------------------------");
-      let mut results = results.lock().unwrap();
-      lg.progress(format!("Test results ({}): ", results.len()));
-      lg.progress("Module ID | Function ID |  Call  | Packet | Result");
-      results.sort_by(|a, b| a.2.0.cmp(&b.2.0));
-      results.sort_by(|a, b| a.1.0.cmp(&b.1.0));
-      results.sort_by(|a, b| a.0.function_id.cmp(&b.0.function_id));
-      results.sort_by(|a, b| a.0.module_id.cmp(&b.0.module_id));
-      let line_fmter = |fn_uid: NumFunUid,
-                        call_num: stages::testing::CallIndexT,
-                        pkt_idx: stages::testing::PacketIndexT,
-                        result: &TestStatus| {
-        format!(
-          "{:^10}|{:^13}|{:^8}|{:^8}| {result:?}",
-          fn_uid.module_id.hex_string(),
-          fn_uid.function_id.hex_string(),
-          call_num.0,
-          pkt_idx.0
-        )
+      lg.progress("reporting results");
+      let delayed_err = {
+        let rmx: Result<Mutex<Vec<LogResult>>, Arc<Mutex<Vec<LogResult>>>> =
+          Arc::try_unwrap(results);
+        match rmx {
+          Ok(val) => {
+            let mut unwrapped_res = val.into_inner()?;
+            report_results(log_out, &mut unwrapped_res, errors).await
+          }
+          Err(_) => Err(anyhow!("Failed to synchronize with the server")),
+        }
       };
 
-      for result in results.iter() {
-        lg.progress(line_fmter(result.0, result.1, result.2, &result.3));
-      }
-      for error in errors {
-        lg.progress(line_fmter(
-          error.params.fn_uid,
-          CallIndexT(error.call_number),
-          PacketIndexT(0),
-          &TestStatus::Fatal(error.message),
-        ));
-      }
-      lg.progress("---------------------------------------------------------------");
       lg.trace("Cleaning up");
       defer_res_end_svr?;
       defer_res_joins??;
       try_meta_svr_arc_deinit(metadata_svr)?;
+      delayed_err.map_err(|e| anyhow!("When logging results: {e}"))?;
     }
   }
   lg.progress("Exiting...");
+  Ok(())
+}
+
+async fn report_results(
+  strategy: LogStrategy,
+  results: &mut [LogResult],
+  errors: Vec<TestJobFailure>,
+) -> Result<()> {
+  let mut lg = Log::result_logger(strategy).await?;
+  results.sort_by(|a, b| a.pkt.0.cmp(&b.pkt.0));
+  results.sort_by(|a, b| a.call.0.cmp(&b.call.0));
+  results.sort_by(|a, b| a.uid.function_id.cmp(&b.uid.function_id));
+  results.sort_by(|a, b| a.uid.module_id.cmp(&b.uid.module_id));
+  for result in results.iter() {
+    // skip errors - prefer outputs
+    let _ = lg.result(result).await;
+  }
+  for error in errors {
+    let uid = error.params.fn_uid;
+    let _ = lg
+      .result(&LogResult {
+        uid,
+        call: stages::testing::CallIndexT(error.call_number),
+        pkt: stages::testing::PacketIndexT(0),
+        status: TestStatus::Fatal(error.message),
+      })
+      .await;
+  }
+  lg.finish().await?;
   Ok(())
 }
