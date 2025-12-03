@@ -427,131 +427,151 @@ createFunctionExceptionBB(llvm::Function &Fn,
   return std::make_pair(CallInsn, ExceptionBB);
 }
 
-// BasicBlock* insertHijackBB(Function &Fn, const Twine& Name, FunctionCallee&
-// EpilogueCallee) {
-//   auto* BB = BasicBlock::Create(Fn.getContext(), Name, std::addressof(Fn));
-//   // call to hijack
-//   CallInst *CallInsn = CallInst::Create(EpilogueCallee);
-//   CallInsn->insertInto(BB, BB->end());
-//   return BB;
-// }
+// excludes our own functions from being wrapped inside of our invoke
+// conditional
+bool isCallInstrumentable(const llvm::CallBase &Insn) {
+  // FIXME: better detection
+  // skipping "our" hooklib functions
+  return !Insn.getCalledFunction()->getName().starts_with("hook_");
+}
+
+using EpilogueCalleT = struct {
+  FunctionCallee plain;
+  FunctionCallee exception;
+};
+
+// returns a pair of function end handlers
+EpilogueCalleT obtainFunctionEndHooks(Module &M,
+                                      const common::SFnUidConstants &C) {
+  auto Types = {C.module->getType(), C.function->getType()};
+  auto &Ctx = M.getContext();
+  FunctionCallee Plain = M.getOrInsertFunction(
+      "hook_test_epilogue",
+      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
+
+  FunctionCallee Exception = M.getOrInsertFunction(
+      "hook_test_epilogue_exc",
+      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
+  return {Plain, Exception};
+}
+
+using SkipSetT = std::set<const llvm::Instruction *>;
+
+// returns true if the function has been finished, false otherwise (iterators
+// invalidated)
+bool handleFunctionEndings(llvm::Function &Fn, SkipSetT &InstsToSkip,
+                           const common::SFnUidConstants &C,
+                           EpilogueCalleT &EpilogueCalles,
+                           BasicBlock *ExceptionBB, llvm::Value *TestingFlag) {
+  auto &Module = *Fn.getParent();
+  auto &EpilogueExceptionFn = EpilogueCalles.exception;
+  auto &EpilogueCallFn = EpilogueCalles.plain;
+
+  inst_iterator I = inst_begin(Fn);
+  inst_iterator E = inst_end(Fn);
+  for (; I != E; ++I) {
+    auto *InstPtr = std::addressof(*I);
+    if (InstsToSkip.contains(InstPtr)) {
+      continue;
+    }
+
+    if (bool IsResume = I->getOpcode() == Instruction::Resume;
+        IsResume || I->getOpcode() == Instruction::Ret) {
+      // ret and resume are BB terminators - one ends a function, the other
+      // exception handling in other words - ideal spot to detect the end of
+      // function execution
+
+      // we thus insert a call before these instructions that:
+      // * IN CAPTURE MODE: does nothing so as to not modify the control flow
+      // of the program
+
+      // * IN TESTING MODE: exits the function early, reports to us
+      // that the function ended
+      Instruction *RetOrResumeInsn = InstPtr;
+      CallInst *CallInsn =
+          CallInst::Create((IsResume ? EpilogueExceptionFn : EpilogueCallFn),
+                           {C.module, C.function});
+      CallInsn->insertBefore(I->getIterator());
+
+      // insert to the to-skip list - we don't want to instrument those two
+      // insns again
+      InstsToSkip.insert(RetOrResumeInsn);
+      InstsToSkip.insert(CallInsn);
+
+      // iterators are invalidated, loop again if not at the end
+      break;
+    }
+
+    if (I->getOpcode() == Instruction::Call) {
+      auto &Insn = llvm::cast<CallInst>(*I);
+      if (!isCallInstrumentable(Insn)) {
+        continue;
+      }
+
+      const auto *Skip =
+          splitCallInsn(Fn, Module, Insn, ExceptionBB, TestingFlag);
+
+      InstsToSkip.insert(InstPtr);
+      if (nullptr != Skip) {
+        InstsToSkip.insert(Skip);
+        // in this case, iterators are invalidated
+        break;
+      }
+      // otherwise nothing happened
+    }
+
+    if (I->getOpcode() == Instruction::Invoke) {
+      auto &Insn = llvm::cast<InvokeInst>(*I);
+      if (!isCallInstrumentable(Insn)) {
+        continue;
+      }
+
+      const auto *Skip =
+          splitInvokeInsn(Fn, Module, Insn, ExceptionBB, TestingFlag);
+
+      InstsToSkip.insert(InstPtr);
+      if (nullptr != Skip) {
+        InstsToSkip.insert(Skip);
+        // in this case, iterators are invalidated
+        break;
+      }
+    }
+  }
+  return I == E;
+}
 
 // inserts test-terminating call to hooklib before every potentially-exitting IR
 // instruction this includes exception-related instructions
-//
-// WARNING: exceptions are only partially covered
 bool insertTestEpilogueHook(Function &Fn, Module &M,
                             const common::SFnUidConstants C,
                             llvm::Value *TestingFlag) {
   std::set<const llvm::Instruction *> InstsToSkip;
 
-  auto Types = {C.module->getType(), C.function->getType()};
-
-  auto &Ctx = M.getContext();
-  FunctionCallee EpilogueCallFn = M.getOrInsertFunction(
-      "hook_test_epilogue",
-      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
-
-  FunctionCallee EpilogueExceptionFn = M.getOrInsertFunction(
-      "hook_test_epilogue_exc",
-      FunctionType::get(Type::getVoidTy(Ctx), Types, false));
-
+  auto EpilogueCallees = obtainFunctionEndHooks(M, C);
   auto [ToSkipInsn, ExceptionBB] =
-      createFunctionExceptionBB(Fn, &EpilogueExceptionFn, C);
+      createFunctionExceptionBB(Fn, &EpilogueCallees.exception, C);
   InstsToSkip.insert(ToSkipInsn);
 
-  inst_iterator I;
-  inst_iterator E;
-
   // realistically, we add < 10 IR instructions per single modification
+  // worst case - we instrument all function's instructions
+
   // if we do more than this many loops, we are stuck and should fail hard
   const auto FunctionInsnCountSanityCheck = Fn.getInstructionCount() * 10ULL;
-  auto LoopGuard = 0ULL;
-  do {
-    ++LoopGuard;
-    if (LoopGuard > FunctionInsnCountSanityCheck) {
+  for (auto LoopGuard = 0ULL; LoopGuard < FunctionInsnCountSanityCheck;
+       ++LoopGuard) {
+    if (LoopGuard == FunctionInsnCountSanityCheck - 1) {
       report_fatal_error("llcap instrumentation BUG - infinite epilogue "
                          "insertion loop\nFn : " +
                          Fn.getName() + "\nMod: " + M.getModuleIdentifier());
       std::terminate();
     }
 
-    I = inst_begin(Fn);
-    E = inst_end(Fn);
-    for (; I != E; ++I) {
-      auto *InstPtr = std::addressof(*I);
-      if (InstsToSkip.contains(InstPtr)) {
-        continue;
-      }
-
-      if (bool IsResume = I->getOpcode() == Instruction::Resume;
-          IsResume || I->getOpcode() == Instruction::Ret) {
-        // ret and resume are BB terminators - one ends a function, the other
-        // exception handling in other words - ideal spot to detect the end of
-        // function execution
-
-        // we thus insert a call before these instructions that:
-        // * IN CAPTURE MODE: does nothing so as to not modify the control flow
-        // of the program
-
-        // * IN TESTING MODE: exits the function early, reports to us
-        // that the function ended
-        Instruction *RetOrResumeInsn = InstPtr;
-        CallInst *CallInsn =
-            CallInst::Create((IsResume ? EpilogueExceptionFn : EpilogueCallFn),
-                             {C.module, C.function});
-        CallInsn->insertBefore(I->getIterator());
-
-        // insert to the to-skip list - we don't want to instrument those two
-        // insns again
-        InstsToSkip.insert(RetOrResumeInsn);
-        InstsToSkip.insert(CallInsn);
-
-        // iterators are invalidated, loop again if not at the end
-        break;
-      }
-
-      if (I->getOpcode() == Instruction::Call) {
-        auto &Insn = llvm::cast<CallInst>(*I);
-        if (Insn.getCalledFunction()->getName().starts_with("hook_")) {
-          // FIXME: better detection
-          // skipping "our" hooklib functions
-          continue;
-        }
-
-        const auto *Skip = splitCallInsn(Fn, M, Insn, ExceptionBB, TestingFlag);
-
-        InstsToSkip.insert(InstPtr);
-        if (nullptr != Skip) {
-          InstsToSkip.insert(Skip);
-          // in this case, iterators are invalidated
-          break;
-        }
-        // otherwise nothing happened
-      }
-
-      if (I->getOpcode() == Instruction::Invoke) {
-        auto &Insn = llvm::cast<InvokeInst>(*I);
-        if (Insn.getCalledFunction()->getName().starts_with("hook_")) {
-          // FIXME: better detection
-          // skipping "our" hooklib functions
-          continue;
-        }
-
-        const auto *Skip =
-            splitInvokeInsn(Fn, M, Insn, ExceptionBB, TestingFlag);
-
-        InstsToSkip.insert(InstPtr);
-        if (nullptr != Skip) {
-          InstsToSkip.insert(Skip);
-          // in this case, iterators are invalidated
-          break;
-        }
-        // InstsToSkip.insert(InstPtr);
-        // Insn.setUnwindDest(ExceptionBB);
-      }
+    bool FnFinished = handleFunctionEndings(Fn, InstsToSkip, C, EpilogueCallees,
+                                            ExceptionBB, TestingFlag);
+    if (FnFinished) {
+      break;
     }
-  } while (I != E);
+  }
   return true;
 }
 
