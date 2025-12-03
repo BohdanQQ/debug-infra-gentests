@@ -1,0 +1,35 @@
+syntax = "proto3";
+package llcaproto;
+
+message Arguments {
+  
+}
+
+message SingleArgVariant {
+  oneof value {
+    float flt = 10;
+    double dbl = 12;
+    sint32 i32 = 14;
+    sint64 i64 = 16;
+    uint32 u32 = 18;
+    uint64 u64 = 20;
+    bytes arbitrary = 22;
+    string str = 24;
+    // add your type here
+    // - note: for repeated types, use your own new Message
+  }
+}
+
+// PRELIMINARY NOTES:
+// docs: https://protobuf.dev/programming-guides/proto3/#consequences
+
+// transmit transfer-management/state-update messages through this as well?
+// so far: ONLY keep hoooklib protobuf-aware and adjust llcap server to read argument packets 
+// as if there was JUST one argument - this will be our protocol buffer object
+
+// pros: - llcap-server simpler, yet reusing our infra
+//       - visualization of data can be done on the basis of protobuf-related tools
+//       - extensions possibly less flake-y!
+// Qs  : - investigate overheads ofsmaller types?? think more about the extension process
+
+
