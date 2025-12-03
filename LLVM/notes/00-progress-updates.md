@@ -932,3 +932,114 @@ It also reacts to the *designated exit code* and tries to read the message (if d
 
 Wrap the function in a `try {} finally {}` block on the LLVM IR level. This can be seen in the
 [LLVM example](https://github.com/llvm-mirror/llvm/blob/2c4ca6832fa6b306ee6a7010bfb80a3f2596f824/examples/ExceptionDemo/ExceptionDemo.cpp#L1075).
+
+# November
+
+* exception mechanism tricky - capture + testing phase is merged
+    * simply catching + rethrowing in non-test mode is infeasible from my experiments (skill issue?)
+    * current version - exposes the information whethere we're running a test to the LLVM IR pass
+        * use runtime checks of this information to split execution:
+
+A general call inside the target function:
+
+```c++
+auto result = foo();
+```
+
+becomes (if IR cannot guarantee non-throwing calls):
+
+```c++
+auto is_testing = exposed_testing_info();
+auto res1, res2;
+// on IR level, creates 2 basic blocks with 
+// conditional branching based on the exposed "are we testing?"
+if (is_testing) {
+    try {
+        res1 = foo();
+    } catch (...) {
+        hook_epilogue_exception_terminate();
+        // unreachable, the above terminates
+    }
+} else {
+    // not in testing mode, => capturing / not in the test fork yet
+    // we don't want to modify the flow of the program at this point
+    res2 = foo();
+}
+
+
+auto result = is_testing ? res1 : res2;
+
+// rest of the function
+```
+
+
+Output comparison on e2e test `testbin-arg-replacement-unc-exc` - 4th argument packet always causes exception, but only in one path, it is being caught:
+
+Bottom line: If code is NOT `pass` or `exception`, the code continued to execute beyond the tested function - this instrumentation is designed to avoid this.
+
+```log
+P | [main] Module ID | Function ID |  Call  | Packet | Result
+P | [main]  553E8EC8 |  01000000   |   1    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   2    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   3    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   4    | Signal(6)
+P | [main]  553E8EC8 |  01000000   |   4    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   4    | Exit(0)
+P | [main]  553E8EC8 |  01000000   |   5    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   4    | Signal(6)
+P | [main] ---------------------------------------------------------------
+P | [main] Exiting...
+```
+
+(Exit(0) was Exception before my changes, to be investigated)
+
+New:
+
+```log
+P | [main] ---------------------------------------------------------------
+P | [main] Test results (25): 
+P | [main] Module ID | Function ID |  Call  | Packet | Result
+P | [main]  553E8EC8 |  01000000   |   1    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   1    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   2    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   2    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   3    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   3    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   4    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   4    |   4    | Exception
+P | [main]  553E8EC8 |  01000000   |   5    |   0    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   1    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   2    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   3    | Pass
+P | [main]  553E8EC8 |  01000000   |   5    |   4    | Exception
+P | [main] ---------------------------------------------------------------
+```
