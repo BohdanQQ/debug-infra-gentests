@@ -15,6 +15,10 @@
 * decide on the overall approach of tackling multithreading
     * experimentation with the role swap is easier to implement
     * runtime snapshots will bring more usability (easier restart, ensured program state reconstruction)
+* type extension
+    * re-architecture - at least split the functions for the love of god
+    * investigate constant autogeneration
+        * provide data in config regarding custom types instead of requiring recompilation
 * addres config mess
     * ~~look at defaults - required/nonrequired existence of directories/files~~
     * ~~ overall architecture - delegation of the option values further down the line~~
