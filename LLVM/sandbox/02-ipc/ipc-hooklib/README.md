@@ -2,11 +2,16 @@
 
 This library allows the instrumented program to communicate with the [`llcap-server`](../llcap-server/). We inject calls to this library into the target program via the [`llvm-pass`](../../01-llvm-ir/llvm-pass/). The library is primarily written in C++ but should be linkable to a C binary.
 
+## Prerequisites
+
+Protocol Buffers - `protoc`, `protobuf-devel` (tested with `libprotoc 3.19.6`)
+
 ## Build
 
 Building should be as simple as running 
-
-    cmake ./ && make
+    
+    protoc --cpp_out=./ ./protobuf/proto/main.proto
+    cmake ./ -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && make
 
 ## Terminology
 

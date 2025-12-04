@@ -1,5 +1,6 @@
 #include "hook.h"
 #include "llcap_state.h"
+#include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
 #include <array>
 #include <cassert>
@@ -20,6 +21,7 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <utility>
+
 #define ENDPASS_CODE 231
 
 #define HOOKLIB_EC_PKT_RD 232

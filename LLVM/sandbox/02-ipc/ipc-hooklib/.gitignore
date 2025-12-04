@@ -4,3 +4,6 @@ CMakeCache*
 *.so
 Makefile
 CMakeFiles/
+*.pb.cc
+*.pb.h
+compile_commands.json
