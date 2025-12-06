@@ -20,7 +20,9 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 #define ENDPASS_CODE 231
 
@@ -383,8 +385,8 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
       // CHILD
       init_packet_socket(child_socket, test_idx);
       // populates "argument packet" that will be used by instrumentation
-      if (!receive_packet()) {
-        perror("Failed to receive argument packet\n");
+      if (!receive_packet_proto()) {
+        perror("Failed to receive argument packet protobuf\n");
         exit(HOOKLIB_EC_RECV_PKT);
       }
       // in child process, return to resume execution (start hijacking)
@@ -418,6 +420,9 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 
   exit(0);
 }
+// TODO: improve upon (MT support)
+thread_local ::llcaproto::Arguments *s_capptured_args;
+thread_local google::protobuf::Arena s_arena;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
@@ -427,6 +432,8 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
     // itself
     push_data(&module_id, sizeof(module_id));
     push_data(&fn_id, sizeof(fn_id));
+    s_capptured_args =
+        google::protobuf::Arena::Create<::llcaproto::Arguments>(&s_arena);
     // the rest of this function concerns only the testing mode
     return;
   }
@@ -450,11 +457,38 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   }
 }
 
+void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id) {
+  if (in_testing_mode()) {
+    if (is_fn_under_test(module_id, fn_id) && should_hijack_arg()) {
+      // we're done with hijacking of the function
+      disable_hijacking();
+    }
+    return;
+  }
+  // FIXME: implement a ZeroCopyOutputStream
+  static std::vector<std::byte> buff(4096);
+  uint64_t size = static_cast<uint32_t>(s_capptured_args->ByteSizeLong());
+  if (size == 0) {
+    return;
+  }
+  if (size > buff.size()) {
+    buff.resize(size);
+  }
+
+  push_data(&size, sizeof(size));
+  s_capptured_args->SerializeToArray(buff.data(), static_cast<int>(size));
+  push_data(buff.data(), static_cast<uint32_t>(size));
+  // CRITICAL FIXME: this segfaults - probably due to ownership misunderstanding
+  // on my part s_arena.Reset();
+}
+
 int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id) {
-  // The one and zero result as well as its type is crucial here 
+  // The one and zero result as well as its type is crucial here
   // as the result is also used in the LLVM IR plugin (on LLVM IR level)
   int32_t res = (in_testing_mode() && in_testing_fork() &&
-  is_fn_under_test(module_id, fn_id) ) ? 1 : 0;
+                 is_fn_under_test(module_id, fn_id))
+                    ? 1
+                    : 0;
   return res;
 }
 
@@ -496,58 +530,118 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
   hook_test_epilogue_impl(module_id, fn_id, true);
 }
 
-// The following function template is the (de)serializing code for "primitive"
-// types name - fn name argt - type of the captured argument (by value) argvar -
-// a unique name for the scope of the function GENFNDECLTEST merely creates the
-// declaration this creates the function name(argt argvar, argt& target, uint32t
-// module, uint32t fn)
-#define GENFN_TEST_PRIMITIVE(name, argt, argvar)                               \
-  GENFNDECLTEST(name, argt, argvar) {                                          \
-    if (in_testing_mode()) {                                                   \
-      if (!is_fn_under_test((module), (fn))) {                                 \
-        goto just_copy_arg;                                                    \
-      } else {                                                                 \
-        /* Makes sure this is the right call (call order-wise) */              \
-        if (!should_hijack_arg()) {                                            \
-          goto just_copy_arg;                                                  \
-        }                                                                      \
-        register_argument();                                                   \
-        /* This is where argument replacement happens, we copy data from the   \
-        argument packet to the target ptr */                                   \
-        if (!consume_bytes_from_packet(sizeof((argvar)), (target))) {          \
-          std::cerr << "Failed to get " << sizeof((argvar)) << " bytes"        \
-                    << std::endl;                                              \
-          perror("");                                                          \
-          exit(HOOKLIB_EC_PKT_RD);                                             \
-        }                                                                      \
-      }                                                                        \
-      /* in the testing phase, we do not push_data, we either jumped to        \
-      just_copy_arg or we performed argument replacement */                    \
-      return;                                                                  \
-    }                                                                          \
-    /* this part performs argument capture and                                 \
-    copies the argument */                                                     \
-    push_data(&(argvar), sizeof((argvar)));                                    \
-                                                                               \
-  just_copy_arg:                                                               \
-    *(target) = (argvar);                                                      \
-    return;                                                                    \
+// creates a simple wrapper that properly calls the template fn defined
+// below (hook_t)
+#define GEN_HOOK_FN(name, argt, storaget)                                      \
+  GENFNDECLTEST(name, argt, n) {                                               \
+    hook_t<argt, storaget>(n, target, module, fn);                             \
   }
+
+// ensures that
+template <typename Tgt, typename Src>
+concept ConvertibleIsh =
+    std::is_convertible_v<Src, Tgt> && // types are generally convertible
+    (sizeof(Src) <= sizeof(Tgt)) &&    // the Target can fit the Src byte-wise
+    (std::is_signed_v<Tgt> == std::is_signed_v<Src>); // sign is the same
+
+// NumT - numeric type for which we're creating the hook
+// StorageT - the type to be used to store the NumT inside a protobuf
+template <class NumT, class StorageT>
+  requires ConvertibleIsh<StorageT, NumT>
+static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
+#define COPY_AND_RETURN                                                        \
+  *(target) = (n);                                                             \
+  return
+  if (in_testing_mode()) {
+    if (!is_fn_under_test((module), (fn))) {
+      COPY_AND_RETURN;
+    } else {
+      if (!should_hijack_arg()) {
+        COPY_AND_RETURN;
+      }
+      const auto *arg = get_next_arg();
+      if (nullptr == arg) {
+        perror("hookt terr: size, capacity\n");
+        exit(HOOKLIB_EC_PKT_RD);
+      }
+
+// checks the protobuf instance contains the specified type
+// and writes it to the target pointer
+#define LLCAPROTO_GET(fun)                                                     \
+  do {                                                                         \
+    bool ok = arg->has_##fun();                                                \
+    if (!ok) {                                                                 \
+      perror("Serious error - unexpected argument type\n");                    \
+      exit(HOOKLIB_EC_TX_FIN);                                                 \
+    }                                                                          \
+    /* is safe assuming the incoming messages are of correct order */          \
+    *target = static_cast<NumT>(arg->fun());                                   \
+  } while (false)
+#define STORAGE_T_IS(ty) (std::is_same_v<std::remove_cv_t<StorageT>, ty>)
+      // 1. check protobuf type
+      // 2. obtain the value from the protobuf
+      // 3. rewrite the target (hijack)
+
+      // this exists solely due to protobuf's construction (functions flt, dbl,
+      // ...) (getters cannot overlap with proto keywords)
+      if constexpr (STORAGE_T_IS(float)) {
+        LLCAPROTO_GET(flt);
+      } else if constexpr (STORAGE_T_IS(double)) {
+        LLCAPROTO_GET(dbl);
+      } else if constexpr (STORAGE_T_IS(int32_t)) {
+        LLCAPROTO_GET(i32);
+      } else if constexpr (STORAGE_T_IS(uint32_t)) {
+        LLCAPROTO_GET(u32);
+      } else if constexpr (STORAGE_T_IS(int64_t)) {
+        LLCAPROTO_GET(i64);
+      } else if constexpr (STORAGE_T_IS(uint64_t)) {
+        LLCAPROTO_GET(u64);
+      } else {
+        static_assert(false, "invalid type");
+      }
+#undef LLCAPROTO_GET
+    }
+    return;
+  }
+  // register value into the static argument packet protobuf
+  auto *v = s_capptured_args->add_values();
+  // again, this exists due to protobuf's accessors
+  if constexpr (STORAGE_T_IS(float)) {
+    v->set_flt(n);
+  } else if constexpr (STORAGE_T_IS(double)) {
+    v->set_dbl(n);
+  } else if constexpr (STORAGE_T_IS(int32_t)) {
+    v->set_i32(n);
+  } else if constexpr (STORAGE_T_IS(uint32_t)) {
+    v->set_u32(n);
+  } else if constexpr (STORAGE_T_IS(int64_t)) {
+    v->set_i64(n);
+  } else if constexpr (STORAGE_T_IS(uint64_t)) {
+    v->set_u64(n);
+  } else {
+    static_assert(false, "invalid type");
+  }
+  std::cerr << "registered " << n << std::endl;
+#undef STORAGE_T_IS
+  COPY_AND_RETURN;
+#undef COPY_AND_RETURN
+}
+
 // as mentioned in llvm-pass, the variations for same-sized primitives
 // are redundant at this point, we keep them, however, since they do not add
 // that much clutter and may prove useful in the future (to handle specific
 // types differently)
-GENFN_TEST_PRIMITIVE(hook_float, float, n)
-GENFN_TEST_PRIMITIVE(hook_double, double, n)
+GEN_HOOK_FN(hook_float, float, float)
+GEN_HOOK_FN(hook_double, double, double)
 
-GENFN_TEST_PRIMITIVE(hook_char, char, c)
-GENFN_TEST_PRIMITIVE(hook_uchar, UCHAR, c)
-GENFN_TEST_PRIMITIVE(hook_short, short, s)
-GENFN_TEST_PRIMITIVE(hook_ushort, USHORT, s)
-GENFN_TEST_PRIMITIVE(hook_int32, int, i)
-GENFN_TEST_PRIMITIVE(hook_uint32, UINT, i)
-GENFN_TEST_PRIMITIVE(hook_int64, LLONG, d)
-GENFN_TEST_PRIMITIVE(hook_uint64, ULLONG, d)
+GEN_HOOK_FN(hook_char, char, int32_t)
+GEN_HOOK_FN(hook_uchar, UCHAR, uint32_t)
+GEN_HOOK_FN(hook_short, short, int32_t)
+GEN_HOOK_FN(hook_ushort, USHORT, uint32_t)
+GEN_HOOK_FN(hook_int32, int, int)
+GEN_HOOK_FN(hook_uint32, UINT, UINT)
+GEN_HOOK_FN(hook_int64, LLONG, int64_t)
+GEN_HOOK_FN(hook_uint64, ULLONG, uint64_t)
 
 // implements the above, just for a "custom" type, the std::string
 //
@@ -560,49 +654,42 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
     if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
       goto move_string_to_target;
     }
-    register_argument();
-    // up tho this point, the logic is the same as with primitive types
+    // up to this point, the logic is the same as with primitive types
     *target = new std::string();
-    uint32_t cstr_size = 0;
-    uint32_t capacity = 0;
-
-    // this is "our" capture format
     // we "consume" from the packet in the exact same order as we
-    // "push" in the argument capture (below) without the TOTAL SIZE of the
-    // argument packet
-    if (!consume_bytes_from_packet(4, &cstr_size) ||
-        !consume_bytes_from_packet(4, &capacity)) {
+    // "push" in the argument capture (below)
+    const auto *arg = get_next_arg();
+    if (nullptr == arg) {
       perror("strhook terr: size, capacity\n");
       exit(HOOKLIB_EC_PKT_RD);
     }
-    if (cstr_size > capacity) {
-      perror("strhook terr: invalid size\n");
-      exit(HOOKLIB_EC_IMPL);
+    if (!arg->has_str()) {
+      perror("Serious error - unexpected argument type\n");
+      exit(HOOKLIB_EC_TX_FIN);
     }
-    (*target)->reserve(capacity);
-    (*target)->resize(cstr_size);
-    if (!consume_bytes_from_packet(cstr_size, (*target)->data())) {
-      perror("strhook terr: string content");
-      exit(HOOKLIB_EC_PKT_RD);
+    const auto &str_arg = arg->str();
+    const auto &str_val = str_arg.value();
+    (*target)->reserve(str_arg.capacity());
+    (*target)->resize(str_val.size());
+    if (nullptr != str_val.data()) {
+      std::memcpy((*target)->data(), str_val.data(), str_val.size());
     }
     return;
   } else {
     // argument capture
-    uint32_t cstring_size = static_cast<uint32_t>(str->size());
-    uint32_t capacity = static_cast<uint32_t>(str->capacity());
-    uint64_t size = cstring_size + sizeof(capacity) + sizeof(cstring_size);
+    std::cerr << "llcap_hooklib_extra_cxx_string - capture\n" << std::endl;
     if (str->size() > UINT32_MAX) {
       perror("strhook cerr: size error");
       return;
     }
+    auto *v = s_capptured_args->add_values();
+    ::llcaproto::StringWrap *protoString =
+        google::protobuf::Arena::Create<llcaproto::StringWrap>(&s_arena);
 
-    // we are required to push the TOTAL SIZE of the argument payload first
-    // (this corresponds to the semantics of the LLSZ_CUSTOM marker)
-    push_data(&size, sizeof(size));
-    // the rest of the pushes are up to us
-    push_data(&cstring_size, sizeof(cstring_size));
-    push_data(&capacity, sizeof(capacity));
-    push_data(str->c_str(), cstring_size);
+    protoString->set_capacity(str->capacity());
+    // FIXME: avoid this copy?
+    protoString->set_value(*str);
+    v->set_allocated_str(protoString);
   }
 move_string_to_target:
   // implementation detail: it str is an in/out argument, the caller of the

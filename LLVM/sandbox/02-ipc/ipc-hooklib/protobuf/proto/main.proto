@@ -1,10 +1,6 @@
 syntax = "proto3";
 package llcaproto;
 
-message Arguments {
-  
-}
-
 message SingleArgVariant {
   oneof value {
     float flt = 10;
@@ -14,11 +10,22 @@ message SingleArgVariant {
     uint32 u32 = 18;
     uint64 u64 = 20;
     bytes arbitrary = 22;
-    string str = 24;
+    StringWrap str = 24;
     // add your type here
     // - note: for repeated types, use your own new Message
   }
 }
+
+message Arguments {
+  repeated SingleArgVariant values = 1;
+}
+
+
+message StringWrap {
+  string value = 10;
+  uint64 capacity = 12;
+}
+
 
 // PRELIMINARY NOTES:
 // docs: https://protobuf.dev/programming-guides/proto3/#consequences

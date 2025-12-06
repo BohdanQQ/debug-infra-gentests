@@ -24,9 +24,6 @@ typedef struct {
   // should prevent further forking when instrumented code (preamble) is reached
   // multiple times
   unsigned int forked;
-  // number of arguments to read, should prevent argument hijacking when
-  // instrumented code is reached multiple times (decrement & check if zero)
-  unsigned int arg_count;
   // number of tests to be performed (number of forks to perform)
   unsigned int test_count;
   // the number of the call of the target function to instrument

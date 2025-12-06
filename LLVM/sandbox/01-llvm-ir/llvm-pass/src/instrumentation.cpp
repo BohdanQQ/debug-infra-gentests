@@ -590,6 +590,10 @@ llvm::Value *insertArgCapturePreambleHooks(IRBuilder<> &Builder, Module &M,
   return Builder.CreateICmpEQ(TestCall, Val);
 }
 
+void insertArgCaptureArgEpilogueHook(IRBuilder<> &Builder, Module &M, const common::SFnUidConstants &C) {
+   common::insertInfraFnCall(Builder, M, "hook_arg_epilogue", C);
+}
+
 void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
                          Type *Ty, const FunctionCallee &Callee,
                          ConstantInt *ModId, ConstantInt *FnId) {
@@ -1037,6 +1041,8 @@ void ArgumentInstrumentation::instrument() {
       argCapture::insertArgCaptureHook(Builder, m_module, Constants, Arg,
                                        Mapping, Mapping.getArgumentSizeTypes());
     }
+    argCapture::insertArgCaptureArgEpilogueHook(Builder, m_module, Constants);
+
     assert(m_fnEndStrategy);
     (*m_fnEndStrategy)(
         m_module, Fn,

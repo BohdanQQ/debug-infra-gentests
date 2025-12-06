@@ -2,10 +2,7 @@ use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr},
-  sizetype_handlers::{
-    ArgSizeTypeRef, CStringTypeReader, CustomTypeReader, FixedSizeTyReader, ReadProgress,
-    SizeTypeReader,
-  },
+  sizetype_handlers::{CustomTypeReader, ReadProgress, SizeTypeReader},
   stages::arg_capture::ArgPacketDumper,
 };
 use anyhow::{Result, ensure};
@@ -13,55 +10,20 @@ use anyhow::{Result, ensure};
 use super::TracingInfra;
 
 struct SizeTypeReaders {
-  fixed: [Box<dyn SizeTypeReader>; 17],
-  c_str: Box<dyn SizeTypeReader>,
   custom: Box<dyn SizeTypeReader>,
-}
-
-fn boxed_ty_reader(size: usize) -> Box<FixedSizeTyReader> {
-  Box::new(FixedSizeTyReader::of_size(size))
 }
 
 // the readers returned by this function are reused for every argument
 // (by .reset()ing the reader)
 fn get_sizetype_readers() -> SizeTypeReaders {
   SizeTypeReaders {
-    // one can index by the size itself to obtain the correct reader
-    fixed: [
-      boxed_ty_reader(0),
-      boxed_ty_reader(1),
-      boxed_ty_reader(2),
-      boxed_ty_reader(3),
-      boxed_ty_reader(4),
-      boxed_ty_reader(5),
-      boxed_ty_reader(6),
-      boxed_ty_reader(7),
-      boxed_ty_reader(8),
-      boxed_ty_reader(9),
-      boxed_ty_reader(10),
-      boxed_ty_reader(11),
-      boxed_ty_reader(12),
-      boxed_ty_reader(13),
-      boxed_ty_reader(14),
-      boxed_ty_reader(15),
-      boxed_ty_reader(16),
-    ],
-    c_str: Box::new(CStringTypeReader::new()),
     custom: Box::new(CustomTypeReader::new()),
   }
 }
 
 impl SizeTypeReaders {
-  pub fn get_reader(&mut self, sz: ArgSizeTypeRef) -> Option<&mut Box<dyn SizeTypeReader>> {
-    let res = match sz {
-      ArgSizeTypeRef::Fixed(i) => match i {
-        0..=16 => &mut self.fixed[i],
-        _ => return None,
-      },
-      ArgSizeTypeRef::Cstr => &mut self.c_str,
-      ArgSizeTypeRef::Custom => &mut self.custom,
-    };
-    Some(res)
+  pub fn get_reader(&mut self) -> Option<&mut Box<dyn SizeTypeReader>> {
+    Some(&mut self.custom)
   }
 }
 
@@ -155,6 +117,7 @@ impl PartialCaptureState {
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
       if raw_buff.empty() {
+        lg.trace(format!("Argument idx: {i} empty"));
         return Ok(Self::CapturingArgs {
           id,
           arg_idx: i,
@@ -163,7 +126,7 @@ impl PartialCaptureState {
       }
 
       // obtain an argument reader that will read the packet
-      let reader = readers.get_reader(*desc);
+      let reader = readers.get_reader();
       ensure!(
         reader.is_some(),
         "Unexpected size type that is missing a reader {:?}",
@@ -178,6 +141,7 @@ impl PartialCaptureState {
           mut payload,
           consumed_bytes,
         } => {
+          lg.trace(format!("Argument idx: {i} payload {payload:02X?}"));
           // append the argument data to the packet
           buff.append(&mut payload);
           raw_buff.shift(consumed_bytes);
@@ -186,6 +150,7 @@ impl PartialCaptureState {
         // the reader is done with the buffer
         // and the arugment is not ready yet
         ReadProgress::NotYet => {
+          lg.trace(format!("Argument idx: {i} skip {}", slice.len()));
           // skip all the bytes
           raw_buff.shift(slice.len());
           // we're not continuing the loop, buffer is empty
@@ -322,7 +287,7 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
           if let Some(dumper) = self.capture_target.get_packet_dumper(id) {
             dumper.dump(&mut buff)?;
           }
-          Log::get("argCap update_from_buffer").trace(format!("{buff:?}"));
+          Log::get("argCap update_from_buffer").trace(format!("{buff:02X?}"));
           // restart from an empty state
           PartialCaptureState::Empty
         }

@@ -254,18 +254,12 @@ async fn main() -> Result<()> {
             module.hex_string(),
             function.hex_string()
           ))?;
-          let arg_count = packet_reader.get_arg_count(uid).ok_or(anyhow!(
-            "Not found args: {} {}",
-            module.hex_string(),
-            function.hex_string()
-          ))?;
 
-          if test_count == 0 || arg_count == 0 {
+          if test_count == 0 {
             Log::get("send_test_metadata").warn(format!(
-              "Skipping M: {} F: {} due to zero arg/test count a: {}, t:{}",
+              "Skipping M: {} F: {} due to zero test count t:{}",
               module.hex_string(),
               function.hex_string(),
-              arg_count,
               test_count
             ));
             continue;
@@ -285,7 +279,6 @@ async fn main() -> Result<()> {
                 function_id: *function,
                 module_id: *module,
               },
-              arg_count,
               test_count,
               test_case_timeout: Duration::from_secs(timeout as u64),
               job_timeout: global_timeout.map(|v| Duration::from_secs(v as u64)),

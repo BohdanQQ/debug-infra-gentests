@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow};
 
 use crate::log::Log;
 
@@ -19,8 +19,7 @@ pub enum ReadProgress {
 
 #[derive(Debug, Copy, Clone)]
 pub enum ArgSizeTypeRef {
-  Fixed(usize),
-  Cstr,
+  Empty,
   Custom,
 }
 
@@ -28,10 +27,10 @@ impl TryFrom<u16> for ArgSizeTypeRef {
   type Error = anyhow::Error;
 
   fn try_from(id: u16) -> Result<Self, Self::Error> {
+    // FIXME: temporary workaround for protobuf compatibility!
     match id {
-      0..16 => Ok(Self::Fixed(id.into())),
-      1026 => Ok(Self::Cstr),
-      1027 => Ok(Self::Custom),
+      0 => Ok(Self::Empty),
+      1..=1027 => Ok(Self::Custom),
       _ => Err(anyhow!("Unsupported argument size type: {id}")),
     }
   }
@@ -49,175 +48,6 @@ pub trait SizeTypeReader {
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress>;
   /// indicates that reader has finished reading, data is ready
   fn done(&self) -> bool;
-}
-
-pub struct FixedSizeTyReader {
-  size: usize,
-  done_read: bool,
-  buffer: Vec<u8>,
-}
-
-impl FixedSizeTyReader {
-  pub fn of_size(size: usize) -> Self {
-    Self {
-      buffer: Vec::with_capacity(size),
-      size,
-      done_read: false,
-    }
-  }
-}
-
-impl SizeTypeReader for FixedSizeTyReader {
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
-    if self.size == 0 {
-      // special case of the zero-sized reader
-      self.done_read = true;
-      return Ok(ReadProgress::Done {
-        payload: Vec::with_capacity(0),
-        consumed_bytes: 0,
-      });
-    }
-
-    if self.done_read {
-      return Ok(ReadProgress::Nop);
-    }
-
-    ensure!(
-      self.size >= self.buffer.len(),
-      "Invalid fixed reader condition - len!"
-    );
-
-    // what we wish to read
-    let remaining = self.size - self.buffer.len();
-    ensure!(
-      remaining != 0,
-      "Invalid fixed reader condition - remaining!"
-    );
-
-    let to_cpy = remaining.min(data.len());
-    for item in data.iter().take(to_cpy) {
-      self.buffer.push(*item);
-    }
-
-    if remaining == to_cpy {
-      // we read everything we needed
-      let mut buff = Vec::with_capacity(self.size);
-      std::mem::swap(&mut buff, &mut self.buffer);
-      self.done_read = true;
-      Ok(ReadProgress::Done {
-        payload: buff,
-        consumed_bytes: to_cpy,
-      })
-    } else {
-      Ok(ReadProgress::NotYet)
-    }
-  }
-
-  fn read_reset(&mut self) -> bool {
-    const FN: &str = "read_reset";
-    if !self.done_read {
-      Log::get(FN).warn("Reset on unfinished reader");
-      return false;
-    }
-    if !self.buffer.is_empty() {
-      Log::get(FN).warn("Reset without consuming the reader's buffer");
-      return false;
-    }
-
-    self.done_read = false;
-    true
-  }
-
-  fn done(&self) -> bool {
-    self.done_read
-  }
-}
-
-// reads a 0x00-terminated string
-// (so far unused in the instrumentation)
-pub enum CStringTypeReader {
-  Start,
-  Reading { payload: Vec<u8> },
-  ReachedZero,
-}
-
-impl CStringTypeReader {
-  pub fn new() -> Self {
-    CStringTypeReader::Start
-  }
-}
-
-// true if zero byte reached
-fn consume_until_zero_or_end(out: &mut Vec<u8>, inp: &[u8]) -> bool {
-  for i in inp {
-    out.push(*i);
-    if *i == 0 {
-      return true;
-    }
-  }
-
-  false
-}
-
-impl SizeTypeReader for CStringTypeReader {
-  fn read_reset(&mut self) -> bool {
-    if !self.done() {
-      return false;
-    }
-    *self = Self::Start;
-    true
-  }
-
-  fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
-    // this "pair" thing is necessary to make borrow checker happy
-    let (newstate, retval) = match self {
-      CStringTypeReader::Start => {
-        let mut output: Vec<u8> = vec![];
-        if consume_until_zero_or_end(&mut output, data) {
-          let len = output.len();
-          (
-            Some(CStringTypeReader::ReachedZero),
-            Ok(ReadProgress::Done {
-              payload: output,
-              consumed_bytes: len,
-            }),
-          )
-        } else {
-          (
-            Some(CStringTypeReader::Reading { payload: output }),
-            Ok(ReadProgress::NotYet),
-          )
-        }
-      }
-      CStringTypeReader::Reading { payload } => {
-        let mut new_vec = vec![];
-        if consume_until_zero_or_end(payload, data) {
-          std::mem::swap(&mut new_vec, payload);
-          let len = payload.len();
-          (
-            Some(CStringTypeReader::ReachedZero),
-            Ok(ReadProgress::Done {
-              payload: new_vec,
-              consumed_bytes: len,
-            }),
-          )
-        } else {
-          std::mem::swap(&mut new_vec, payload);
-          (None, Ok(ReadProgress::NotYet))
-        }
-      }
-      CStringTypeReader::ReachedZero => (None, Ok(ReadProgress::Nop)),
-    };
-    // I think this is not the best design (changing of self), but whatever
-    if let Some(newstate) = newstate {
-      *self = newstate;
-    }
-    retval
-  }
-
-  fn done(&self) -> bool {
-    matches!(self, Self::ReachedZero)
-  }
 }
 
 /// Returns start + number of bytes consumed
@@ -335,13 +165,17 @@ fn perform_reading_stage(
   payload: &mut Vec<u8>,
   previous_read: usize,
 ) -> (Option<CustomTypeReader>, ReadProgress) {
+  let lg = Log::get("perform_reading_stage");
+  lg.trace(format!("Reading up to {target_size}"));
   let to_read = target_size as usize - payload.len();
+  lg.trace(format!("Reading {to_read}"));
   for b in data.iter().skip(offset).take(to_read) {
     payload.push(*b);
   }
 
   if to_read == 0 || to_read <= data.len() - offset {
     let mut exhg = vec![];
+    lg.trace("Done - consumed ");
     std::mem::swap(&mut exhg, payload);
     (
       Some(CustomTypeReader::Finished),
@@ -351,6 +185,7 @@ fn perform_reading_stage(
       },
     )
   } else {
+    lg.trace("Consumed - might need more data");
     let mut swp = vec![];
     std::mem::swap(&mut swp, payload);
     (
@@ -369,176 +204,6 @@ mod tests {
 
   // various tests checking (among other things) that the readers output
   // the correct state when presented with differently chunked data
-
-  // fix_r => fixed-size reader
-  #[test]
-  fn fix_r_zero_done_on_init() {
-    let zero_reader = FixedSizeTyReader::of_size(0);
-    assert!(!zero_reader.done());
-  }
-
-  #[test]
-  fn fix_r_zero_does_not_consume() {
-    let data = [0u8, 0u8];
-    let mut zero_reader = FixedSizeTyReader::of_size(0);
-    assert!(
-      matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
-    );
-  }
-
-  #[test]
-  fn fix_r_zero_does_not_consume_empty() {
-    let data = [];
-    let mut zero_reader = FixedSizeTyReader::of_size(0);
-    assert!(
-      matches!(zero_reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == 0 && consumed_bytes == 0 )
-    );
-  }
-
-  #[test]
-  fn fix_r_zero_done_after_read() {
-    let data = [0u8, 0u8];
-    let mut zero_reader = FixedSizeTyReader::of_size(0);
-    let _ = zero_reader.read(&data);
-    assert!(zero_reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_done_on_init() {
-    let reader = FixedSizeTyReader::of_size(2);
-    assert!(!reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_exact() {
-    let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::of_size(data.len());
-    assert!(
-      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() ==  data.len() && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == data.len() )
-    );
-  }
-
-  #[test]
-  fn fix_r_nonzero_done_after_read_exact() {
-    let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::of_size(data.len());
-    let _ = reader.read(&data);
-    assert!(reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_more() {
-    let data = [1u8, 2u8, 3u8];
-    let sz = data.len() - 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    assert!(
-      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == sz && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == sz )
-    );
-  }
-
-  #[test]
-  fn fix_r_nonzero_done_after_read_more() {
-    let data = [1u8, 2u8, 3u8];
-    let sz = data.len() - 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    let _ = reader.read(&data);
-    assert!(reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_not_done_after_read_less() {
-    let data = [1u8, 2u8];
-    let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    let _ = reader.read(&data);
-    assert!(!reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_less() {
-    let data = [1u8, 2u8];
-    let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    matches!(reader.read(&data), Ok(ReadProgress::NotYet));
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_zero() {
-    let data = [];
-    let sz = 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    matches!(reader.read(&data), Ok(ReadProgress::NotYet));
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_less_and_exact() {
-    let data = [2u8];
-    let data2 = [111u8];
-    let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    let _ = reader.read(&data);
-    let res = reader.read(&data2);
-    assert!(
-      matches!(res, Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() == sz && consumed_bytes == 1 && payload[0] == data[0] && payload[1] == data2[0])
-    );
-  }
-
-  #[test]
-  fn fix_r_nonzero_done_after_read_less_and_exact() {
-    let data = [2u8];
-    let data2 = [111u8];
-    let sz = data.len() + 1;
-    let mut reader = FixedSizeTyReader::of_size(sz);
-    let _ = reader.read(&data);
-    let _ = reader.read(&data2);
-    assert!(reader.done());
-  }
-
-  #[test]
-  fn fix_r_nonzero_empty_reset() {
-    let mut reader = FixedSizeTyReader::of_size(1);
-    assert!(!reader.read_reset());
-  }
-
-  #[test]
-  fn fix_r_nonzero_nonnempty_reset() {
-    let data = [1u8, 2u8];
-    let data_smaller = [1u8];
-    let mut reader = FixedSizeTyReader::of_size(data.len());
-    let _ = reader.read(&data_smaller);
-    assert!(!reader.read_reset());
-  }
-
-  #[test]
-  fn fix_r_nonzero_read_after_reset() {
-    let data = [1u8, 2u8];
-    let mut reader = FixedSizeTyReader::of_size(data.len());
-    let _ = reader.read(&data);
-    reader.read_reset();
-    assert!(
-      matches!(reader.read(&data), Ok(ReadProgress::Done { payload, consumed_bytes }) if payload.len() ==  data.len() && payload[0] == data[0] && payload[1] == data[1] && consumed_bytes == data.len() )
-    );
-  }
-
-  #[test]
-  fn fix_r_zero_empty_reset() {
-    let mut reader = FixedSizeTyReader::of_size(0);
-    assert!(!reader.read_reset());
-  }
-
-  #[test]
-  fn fix_r_zero_reset_after_empty_read() {
-    let mut reader = FixedSizeTyReader::of_size(0);
-    let _ = reader.read(&[]);
-    assert!(reader.read_reset());
-  }
-
-  #[test]
-  fn fix_r_zero_reset_after_nonempty_read() {
-    let mut reader = FixedSizeTyReader::of_size(0);
-    let _ = reader.read(&[1, 2]);
-    assert!(reader.read_reset());
-  }
 
   #[test]
   fn cus_r_read_init_not_done() {

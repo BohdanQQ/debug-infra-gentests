@@ -33,6 +33,12 @@ Called first during argument capture or testing mode inside instrumented
 function. Ensures correct dispatch according to the test parameters.
 */
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id);
+/*
+Called as the last hook function in runtime argument instrumentation.
+Ensures the flush of the recorded protobuf, as well as setting some
+runtime flags when in testing mode.
+*/
+void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id);
 
 /*
 Whether the specified function is being tested **right now**.

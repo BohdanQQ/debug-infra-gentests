@@ -1,9 +1,12 @@
 #include "llcap_state.h"
+#include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
 #include <assert.h>
 #include <fcntl.h>
+#include <google/protobuf/io/zero_copy_stream_impl.h>
+#include <memory>
 #include <semaphore.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -78,6 +81,12 @@ int init(void) {
 }
 
 int push_data(const void *source, uint32_t len) {
+#ifdef DEBUG
+  for (uint32_t i = 0; i < len; ++i) {
+    printf("%02X", ((uint8_t *)source)[i]);
+  }
+  printf(" %u\n", len);
+#endif
   if (channel_write(&s_channel, source, len) != 0) {
     exit(PUSH_FALURE);
   }
@@ -93,13 +102,13 @@ void deinit(void) {
 }
 
 bool in_testing_mode(void) { return s_buff_info.mode == 2; }
-bool in_testing_fork(void) { return s_buff_info.forked; }
+bool in_testing_fork(void) { return s_buff_info.forked != 0; }
 uint16_t get_test_tout_secs(void) {
   return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0;
 }
 uint32_t test_count(void) { return s_buff_info.test_count; }
 
-void set_fork_flag(void) { s_buff_info.forked = true; }
+void set_fork_flag(void) { s_buff_info.forked = 1; }
 
 uint32_t get_call_num(void) {
   return s_buff_info.target_call_number + 1 - s_call_countdown;
@@ -112,11 +121,10 @@ void register_call(void) {
     s_call_countdown--;
   }
 }
-// counts down the arguments for each argument replacement
-void register_argument(void) { s_buff_info.arg_count--; }
-bool should_hijack_arg(void) {
-  return s_call_countdown == 1 && s_buff_info.arg_count > 0;
-}
+
+void disable_hijacking(void) { s_call_countdown = 0; }
+
+bool should_hijack_arg(void) { return s_call_countdown == 1; }
 
 bool is_fn_under_test(uint32_t mod, uint32_t fn) {
   return in_testing_mode() && s_buff_info.target_modid == mod &&
@@ -124,10 +132,9 @@ bool is_fn_under_test(uint32_t mod, uint32_t fn) {
 }
 
 // local argument packet storage
-static void *s_packet = NULL;
+static ::llcaproto::Arguments *sp_packet = NULL;
 // how much data has been alread read
-static size_t s_current_idx = 0;
-static uint32_t s_packet_size = 0;
+static int s_current_idx = 0;
 
 #define PAYLOAD_T uint64_t
 
@@ -141,66 +148,63 @@ void init_packet_socket(int fd, PAYLOAD_T request_idx) {
   s_packet_idx = request_idx;
 }
 
-bool receive_packet(void) {
+bool receive_packet_proto(void) {
   // send a request to the test coordinator (parent)
   if (write(s_socket_fd, &s_packet_idx, sizeof(s_packet_idx)) !=
       sizeof(s_packet_idx)) {
     return false;
   }
   // read the lenght and the payload
-  if (read(s_socket_fd, &s_packet_size, sizeof(s_packet_size)) !=
-      sizeof(s_packet_size)) {
+  uint32_t packet_size;
+  if (read(s_socket_fd, &packet_size, sizeof(packet_size)) !=
+      sizeof(packet_size)) {
     perror("Failed to recv packet sz");
     return false;
   }
 
-  s_packet = malloc(s_packet_size);
-  if (s_packet == NULL) {
+  auto *packet = malloc(packet_size);
+  if (packet == NULL) {
     perror("Failed to alloc packet");
     return false;
   }
 
-  if (read(s_socket_fd, s_packet, s_packet_size) != s_packet_size) {
+  if (read(s_socket_fd, packet, packet_size) != packet_size) {
     perror("Failed to recv packet data");
-    free(s_packet);
+    free(packet);
     return false;
   }
+
+  sp_packet = new ::llcaproto::Arguments;
+  if (sp_packet == NULL) {
+    perror("Failed to alloc packet");
+    free(packet);
+    return false;
+  }
+  sp_packet->ParseFromArray(packet, static_cast<int>(packet_size));
+  s_current_idx = 0;
+  free(packet);
+
   // the packet is freed once all of its bytes are read (see
-  // consume_bytes_from_packet)
+  // get_next_arg)
   return true;
 }
 
-bool consume_bytes_from_packet(size_t bytes, void *target) {
-  if (s_packet == NULL) {
-    printf("failed: packet uninitialized\n");
-    return false;
+const llcaproto::SingleArgVariant *get_next_arg() {
+  if (sp_packet == nullptr) {
+    return nullptr;
   }
-
-  if (bytes > s_packet_size || (size_t)s_packet_size - bytes < s_current_idx) {
-    printf("failed: request %lu would result in packet overflow (%u %lu)\n",
-           bytes, s_packet_size, s_current_idx);
-    return false;
+  if (sp_packet->values().size() <= s_current_idx) {
+    free(sp_packet);
+    return nullptr;
   }
-
-  memcpy(target, (const char *)s_packet + s_current_idx, bytes);
-  s_current_idx += bytes;
-
-  if (s_current_idx == s_packet_size) {
-    free(s_packet);
-    s_packet_size = 0;
-  }
-  return true;
+  return std::addressof(sp_packet->values()[s_current_idx++]);
 }
 
 bool send_test_pass_to_monitor(bool exception) {
   PAYLOAD_T payload = exception ? HOOKLIB_TESTEXC_VAL : HOOKLIB_TESTPASS_VAL;
   static_assert(sizeof(s_packet_idx) == sizeof(payload), "sanity check");
 
-  if (write(s_socket_fd, &payload, sizeof(payload)) != sizeof(payload)) {
-    return false;
-  }
-
-  return true;
+  return write(s_socket_fd, &payload, sizeof(payload)) == sizeof(payload);
 }
 
 #ifdef MANUAL_INIT_DEINIT

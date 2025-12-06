@@ -329,7 +329,7 @@ async fn test_coordinator_case_handler(
       } // timeout
     }
 
-    lg.trace(format!("Read done: {data:?}"));
+    lg.trace(format!("Read done: {data:02X?}"));
     let msg = TestMessage::try_from(data.as_slice()).map_err(|e| anyhow!(e))?;
 
     let (new_state, response) = handle_client_msg(state, msg, &mut packets, results.clone())?;
@@ -340,7 +340,7 @@ async fn test_coordinator_case_handler(
       return Ok(());
     }
 
-    lg.trace(format!("Response: {response:?}"));
+    lg.trace(format!("Response: {response:02X?}"));
     if response.is_none() {
       continue; // no response required
     }
@@ -440,7 +440,6 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
 #[derive(Clone)]
 pub struct TestJobParams {
   pub fn_uid: NumFunUid,
-  pub arg_count: u32,
   pub test_count: u32,
   pub test_case_timeout: Duration,
   pub job_timeout: Option<Duration>,
@@ -452,7 +451,6 @@ impl TestJobParams {
     TestParams {
       target_call_number: call_idx + 1,
       timeout: self.test_case_timeout,
-      arg_count: self.arg_count,
       test_count: self.test_count,
     }
   }

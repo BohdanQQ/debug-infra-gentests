@@ -324,7 +324,14 @@ impl TryFrom<&[&[u8]]> for FunctionMap {
 
           for sz_type in &specifiers {
             let spec = ArgSizeTypeRef::try_from(*sz_type)?;
-            size_types.push(spec);
+            // FIXME: temporary workaround to allow for protobuf packet
+            if let ArgSizeTypeRef::Custom = spec {
+              size_types.push(spec);
+              break;
+            }
+          }
+          if size_types.is_empty() {
+            lg.warn(format!("No dumpable args detected in fn {name}"));
           }
 
           lg.trace(format!(

@@ -1,6 +1,7 @@
 
 #ifndef HOOKLIB_LLCAP_STATE
 #define HOOKLIB_LLCAP_STATE
+#include "protobuf/proto/main.pb.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,22 +69,20 @@ uint32_t get_call_num(void);
 // tested function
 // (`is_fn_under_test`)
 void register_call(void);
-// registers the single argument that has been replaced this function must be
-// called once for every argument of the target call after `should_hijack_arg`
-// returns true
-//
-// essentially, calls to this function influence the `should_hijack_arg`, which
-// in turn tells us when to stop trying to replace arguments
-void register_argument(void);
+// disables hijacking for the rest of the runtime
+void disable_hijacking(void);
 
 // indicate test passed to the test monitor (parent)
 // `exception` argument indicates whether or not exception handling was taking place
 bool send_test_pass_to_monitor(bool exception);
 // copy specified nr of bytes of the argument packet to the target address
 bool consume_bytes_from_packet(size_t bytes, void *target);
+const llcaproto::SingleArgVariant* get_next_arg();
+
 // intializes the argument packet, use `consume_bytes_from_packet` to consume
 // data from it
 bool receive_packet(void);
+bool receive_packet_proto(void);
 // initialize the socket to the test coordinator (parent)
 // stores the descriptor and the packet index that will be requested
 void init_packet_socket(int fd, uint64_t request_idx);

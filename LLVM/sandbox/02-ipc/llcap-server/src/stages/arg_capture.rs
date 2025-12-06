@@ -164,7 +164,6 @@ struct CaptureReader {
   path: PathBuf,
   file: BufReader<File>,
   packets: usize,
-  args_per_packet: usize,
   // the index of the argument packet that will be read
   // also, the number of packets read so far (if not reset)
   idx: usize,
@@ -184,7 +183,6 @@ impl PacketReader {
       path: path.to_path_buf(),
       file: BufReader::with_capacity(capacity_hint, File::open(path)?),
       packets: 0,
-      args_per_packet: 0,
       idx: 0,
     };
     let mut tests = 0;
@@ -239,7 +237,7 @@ impl PacketReader {
         // get the number of non-zero-sized arguments (the number of actual arguments we will read)
         let args = args
           .iter()
-          .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Fixed(0)))
+          .filter(|x| !matches!(x, crate::sizetype_handlers::ArgSizeTypeRef::Empty))
           .count();
         lg.trace(format!("\targs {args} "));
 
@@ -249,7 +247,6 @@ impl PacketReader {
             path: path.clone(),
             file: BufReader::with_capacity(capacity, File::open(path)?),
             packets: packet_count,
-            args_per_packet: args,
             idx: 0,
           })),
         );
@@ -292,13 +289,6 @@ impl PacketReader {
       .map(|v| v.lock().unwrap().packet_count())
   }
 
-  pub fn get_arg_count(&self, id: NumFunUid) -> Option<u32> {
-    self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().arg_count())
-  }
-
   pub fn get_upcoming_pkt_idx(&self, id: NumFunUid) -> Option<usize> {
     self
       .captures
@@ -311,7 +301,6 @@ impl PacketReader {
 trait PacketIterator {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>>;
   fn packet_count(&self) -> u32;
-  fn arg_count(&self) -> u32;
   fn try_reset(&mut self) -> Result<()>;
   fn upcoming_packet_idx(&mut self) -> usize;
 }
@@ -352,10 +341,6 @@ impl PacketIterator for CaptureReader {
     self.packets as u32
   }
 
-  fn arg_count(&self) -> u32 {
-    self.args_per_packet as u32
-  }
-
   fn try_reset(&mut self) -> Result<()> {
     self.file = BufReader::with_capacity(self.file.capacity(), File::open(self.path.clone())?);
     self.idx = 0;
@@ -375,10 +360,6 @@ impl PacketIterator for EmptyPacketIter {
   }
 
   fn packet_count(&self) -> u32 {
-    0
-  }
-
-  fn arg_count(&self) -> u32 {
     0
   }
 

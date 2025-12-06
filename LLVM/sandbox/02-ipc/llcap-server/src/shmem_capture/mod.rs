@@ -472,7 +472,6 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       target_fnid: 0,
       target_modid: 0,
       forked: 0,
-      arg_count: 0,
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
@@ -491,7 +490,6 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       target_fnid: 0,
       target_modid: 0,
       forked: 0,
-      arg_count: 0,
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
@@ -501,7 +499,6 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
 
 #[derive(Debug)]
 pub struct TestParams {
-  pub arg_count: u32,
   pub test_count: u32,
   pub target_call_number: u32,
   pub timeout: Duration,
@@ -523,7 +520,6 @@ pub fn send_test_metadata(
       target_fnid: *fn_uid.function_id,
       target_modid: *fn_uid.module_id,
       forked: 0,
-      arg_count: params.arg_count,
       test_count: params.test_count,
       target_call_number: params.target_call_number,
       test_timeout_seconds: params.timeout.as_secs() as u16,
