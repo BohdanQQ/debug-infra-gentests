@@ -621,7 +621,6 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
   } else {
     static_assert(false, "invalid type");
   }
-  std::cerr << "registered " << n << std::endl;
 #undef STORAGE_T_IS
   COPY_AND_RETURN;
 #undef COPY_AND_RETURN
@@ -677,7 +676,6 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
     return;
   } else {
     // argument capture
-    std::cerr << "llcap_hooklib_extra_cxx_string - capture\n" << std::endl;
     if (str->size() > UINT32_MAX) {
       perror("strhook cerr: size error");
       return;
