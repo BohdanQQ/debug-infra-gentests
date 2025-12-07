@@ -574,7 +574,6 @@ static bool capture_into(llcaproto::SingleArgVariant *capture, NumT n) {
   } else if constexpr (TYPE_T_IS(T, double)) {
     capture->set_dbl(n);
   } else if constexpr (TYPE_T_IS(T, int32_t)) {
-    std::cerr << "capture i32" << std::endl;
     capture->set_i32(n);
   } else if constexpr (TYPE_T_IS(T, uint32_t)) {
     capture->set_u32(n);
@@ -585,7 +584,6 @@ static bool capture_into(llcaproto::SingleArgVariant *capture, NumT n) {
   } else {
     static_assert(false, "invalid type");
   }
-  std::cerr << "capture end" << std::endl;
   return true;
 }
 
@@ -822,31 +820,22 @@ static void llcap_gen_vec_not_bool(std::vector<T> *vec, std::vector<T> **target,
   } else {
     // argument capture
     auto *v = s_capptured_args->add_values();
-    std::cerr << "args addval" << std::endl;
     llcaproto::Vector *protoVec =
         google::protobuf::Arena::Create<llcaproto::Vector>(&s_arena);
     if (nullptr == protoVec) {
-      std::cerr << "protovec" << std::endl;
       exit(HOOKLIB_EC_IMPL);
     }
-    std::cerr << "protovec alloc" << std::endl;
     protoVec->set_capacity(vec->capacity());
     auto it = vec->cbegin();
     for (; it != vec->cend(); ++it) {
-      std::cerr << "protovec iteration" << std::endl;
       auto *vecItemVariant = protoVec->add_values();
-      if (nullptr == vecItemVariant) {
-        perror("protovec");
-        exit(HOOKLIB_EC_IMPL);
-      }
+
       if constexpr (TYPE_IS(float)) {
         capture_into<float>(vecItemVariant, *it);
       } else if constexpr (TYPE_IS(double)) {
         capture_into<double>(vecItemVariant, *it);
       } else if constexpr (TYPE_IS(int32_t)) {
-        std::cerr << "capture start expected" << std::endl;
         capture_into<int32_t>(vecItemVariant, *it);
-        std::cerr << "capture start end" << std::endl;
       } else if constexpr (TYPE_IS(uint32_t)) {
         capture_into<uint32_t>(vecItemVariant, *it);
       } else if constexpr (TYPE_IS(int64_t)) {
@@ -861,7 +850,6 @@ static void llcap_gen_vec_not_bool(std::vector<T> *vec, std::vector<T> **target,
         static_assert(false, "invalid type");
       }
     }
-    std::cerr << "set allocated vec" << std::endl;
     v->set_allocated_vec(protoVec);
   }
 move_vec_to_target:
