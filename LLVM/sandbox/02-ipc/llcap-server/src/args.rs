@@ -101,7 +101,8 @@ pub enum Stage {
     #[arg(short = 'o', long)]
     selection_path: Option<PathBuf>,
 
-    /// Command to execute the binary whose calls we want to trace
+    /// Command to execute the binary whose calls we want to trace.
+    /// Not desired when import_path is set
     #[arg(trailing_var_arg(true))]
     command: Option<Vec<String>>,
   },
