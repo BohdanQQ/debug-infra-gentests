@@ -170,7 +170,8 @@ pub fn export_tracing_selection(
     path.to_string_lossy()
   );
 
-  let mut file = File::create(&path).map_err(|e| anyhow!(e).context("export_tracing_seleciton"))?;
+  let mut file =
+    File::create(&path).map_err(|e| anyhow!("export_tracing_seleciton failed: {e}"))?;
   for selected in selection {
     let mod_hash = mapping.get_module_hash_by_name(&selected.fn_module);
     ensure!(
@@ -211,7 +212,7 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
   let mut result = Vec::with_capacity(8);
 
   let mut f =
-    BufReader::new(File::open(path).map_err(|e| anyhow!(e).context("import_tracing_seleciton"))?);
+    BufReader::new(File::open(path).map_err(|e| anyhow!("import_tracing_seleciton  failed: {e}"))?);
 
   let mut line = String::with_capacity(256);
   while let Ok(len) = f.read_line(&mut line) {
@@ -253,7 +254,7 @@ pub fn export_call_trace_data(
       "{}-{}-{}\n",
       freq, *fninfo.function_id, module_hash.0
     ))
-    .map_err(|e| anyhow!(e).context("export_data"))?;
+    .map_err(|e| anyhow!("export_data failed: {e}"))?;
   }
 
   lg.info(format!("Exported call tracing data to {out_path:?}"));

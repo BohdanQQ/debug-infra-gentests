@@ -106,7 +106,7 @@ where
 
   let spawned_child = cmd
     .spawn()
-    .map_err(|e| anyhow!(e).context("Failed to spawn from command"))?;
+    .map_err(|e| anyhow!("Failed to spawn from command {e}"))?;
 
   let (monitor_ready_rx, child_monitor) =
     spawn_process_monitor(spawned_child, finalizer_info).await;

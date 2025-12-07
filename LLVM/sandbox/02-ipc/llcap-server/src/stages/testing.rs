@@ -502,12 +502,12 @@ pub async fn test_job(
       let err_path = output_gen.get_err_path(m, f, call_idx + 1);
       cmd.stdout(Stdio::from(
         File::create(out_path.clone())
-          .map_err(|e| anyhow!(e).context(format!("Stdout file creation failed: {out_path:?}")))
+          .map_err(|e| anyhow!("Stdout file creation failed: {e} {out_path:?}"))
           .map_err(mk_error.clone())?,
       ));
       cmd.stderr(Stdio::from(
         File::create(err_path)
-          .map_err(|e| anyhow!(e).context(format!("Stderr file creation failed {out_path:?}")))
+          .map_err(|e| anyhow!("Stderr file creation failed {e} {out_path:?}"))
           .map_err(mk_error.clone())?,
       ));
     }
@@ -515,7 +515,7 @@ pub async fn test_job(
     // launch the test
     let test = cmd
       .spawn()
-      .map_err(|e| anyhow!(e).context("spawn from command"))
+      .map_err(|e| anyhow!("spawn from command: {e}"))
       .map_err(mk_error.clone())?;
 
     let result = wait_or_terminate(test, &job_params, call_idx).await;

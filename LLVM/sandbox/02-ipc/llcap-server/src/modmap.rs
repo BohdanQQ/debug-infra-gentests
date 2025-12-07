@@ -486,20 +486,16 @@ impl ExtModuleMap {
     );
 
     let contents = fs::read(path_to_modfile).map_err(|e| {
-      anyhow!(e).context(format!(
-        "add_module file read {}",
+      anyhow!(
+        "add_module file read {} error: {e}",
         path_to_modfile.to_string_lossy()
-      ))
+      )
     })?;
     let lines: Vec<&[u8]> = contents.split(|x| x == &0xa).collect();
 
     let (module_str_id, fn_map) = if let Some((head, tail)) = lines.split_first() {
       String::from_utf8(head.to_vec())
-        .map_err(|e| {
-          anyhow!(e).context(format!(
-            "add_module cannot not parse string id of a module: {head:?}",
-          ))
-        })
+        .map_err(|e| anyhow!("add_module cannot not parse string id of a module: {head:?}\n{e}",))
         .map(|v| (v, tail))
     } else {
       Err(anyhow!("Empty module file"))
@@ -568,16 +564,15 @@ impl TryFrom<&PathBuf> for ExtModuleMap {
     );
     let mut target = ExtModuleMap::new();
 
-    let dir = std::fs::read_dir(path).map_err(|e| {
-      anyhow!(e).context(format!("Cannot open directory {}", path.to_string_lossy()))
-    })?;
+    let dir = std::fs::read_dir(path)
+      .map_err(|e| anyhow!("Cannot open directory {} ({e})", path.to_string_lossy()))?;
 
     for file in dir {
       let res = match file {
-        Err(e) => Err(anyhow!(e).context(format!(
-          "Module file {} could not be listed",
+        Err(e) => Err(anyhow!(
+          "Module file {} could not be listed: {e}",
           path.to_string_lossy()
-        ))),
+        )),
         Ok(entry) => target.add_module(&entry.path()),
       };
 

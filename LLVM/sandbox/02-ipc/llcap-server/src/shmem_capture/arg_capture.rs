@@ -5,7 +5,7 @@ use crate::{
   sizetype_handlers::{CustomTypeReader, ReadProgress, SizeTypeReader},
   stages::arg_capture::ArgPacketDumper,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Result, anyhow, ensure};
 
 use super::TracingInfra;
 
@@ -53,7 +53,7 @@ impl PartialCaptureState {
   /// reads module ID and shifts raw_buff by the size of module ID
   fn progress_read_mod_id(raw_buff: &mut ReadOnlyBufferPtr, mods: &ExtModuleMap) -> Result<Self> {
     let lg = Log::get("progress_get_module_id");
-    lg.trace("Start");
+    lg.trace(format!("Start {:02X?}", raw_buff.as_slice()));
     // keep the type annotation to warn if implementing types change
     let rcvd_id: u32 = raw_buff.unaligned_shift_num_read()?;
     let rcvd_id = IntegralModId::from(rcvd_id);
@@ -108,11 +108,6 @@ impl PartialCaptureState {
     let size_refs = mods.get_function_arg_size_descriptors(id);
     ensure!(size_refs.is_some(), "Unknown function {id:?}");
     let size_refs = size_refs.unwrap();
-    if arg_idx >= size_refs.len() {
-      lg.warn(format!(
-        "Invalid arg index {arg_idx} for args {size_refs:?} in ID {id:?}"
-      ));
-    }
     // for each argument description, parse the argument from the buffer
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
@@ -238,7 +233,7 @@ pub fn perform_arg_capture(
 
   capture
     .run(infra, modules)
-    .map_err(|e| e.context("arg_capture"))?;
+    .map_err(|e| anyhow!("arg_capture: {e}"))?;
   Ok(())
 }
 

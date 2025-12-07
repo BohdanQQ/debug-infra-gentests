@@ -174,7 +174,7 @@ impl TracingInfra {
   /// blocks until a buffer has been filled by the instrumented applicaiton
   pub fn wait_for_full_buffer(&mut self) -> Result<BorrowedReadBuffer<'_>> {
     let sem_res = self.sem_full.try_wait();
-    sem_res.map_err(|e| e.context("wait_for_full_buffer"))?;
+    sem_res.map_err(|e| anyhow!("in wait_for_full_buffer: {e}"))?;
     self.got_buff_flag = true;
     Log::get("get_buff").trace(format!("get @ index {}", self.current_index));
     self.get_checked_base_ptr()
@@ -193,10 +193,10 @@ impl TracingInfra {
     ));
     let sem_res = self.sem_free.try_post();
     sem_res.map_err(|e| {
-      e.context(format!(
-        "While posting a free buffer (idx {}",
+      anyhow!(
+        "While posting a free buffer (idx {}): {e}",
         self.current_index
-      ))
+      )
     })?;
     self.got_buff_flag = false;
     self.current_index += 1;
@@ -420,9 +420,9 @@ fn deinit_semaphore_single(sem: Semaphore) -> Result<()> {
 
 pub fn deinit_semaphores(free_handle: Semaphore, full_handle: Semaphore) -> Result<()> {
   deinit_semaphore_single(free_handle)
-    .map_err(|e| e.context("When closing free semaphore"))
+    .map_err(|e| anyhow!("When closing free semaphore: {e}"))
     .and_then(|_| deinit_semaphore_single(full_handle))
-    .map_err(|e| e.context("When closing full semaphore"))
+    .map_err(|e| anyhow!("When closing full semaphore: {e}"))
 }
 
 fn get_shmem_name(prefix: &str) -> String {
@@ -458,7 +458,7 @@ fn cleanup_shared_mem(prefix: &str) -> Result<()> {
 fn deinit_shmem(buffers_mem: ShmemHandle) -> Result<()> {
   buffers_mem
     .try_unmap()
-    .map_err(|e| e.context("deinit_shmem"))
+    .map_err(|e| anyhow!("deinit_shmem failed: {e}"))
 }
 
 pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraParams) -> Result<()> {

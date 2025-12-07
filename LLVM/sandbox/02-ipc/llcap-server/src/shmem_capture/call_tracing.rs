@@ -7,7 +7,7 @@ use crate::{
   stages::call_tracing::Message,
 };
 
-use anyhow::{Result, ensure};
+use anyhow::{Result, anyhow, ensure};
 
 use super::TracingInfra;
 
@@ -50,7 +50,7 @@ fn receive_module_id(
     );
     let mod_id: u32 = raw_buff
       .unaligned_shift_num_read()
-      .map_err(|e| e.context("module ID"))?;
+      .map_err(|e| anyhow::anyhow!("module ID reception error: {e}"))?;
     IntegralModId(mod_id)
   })
 }
@@ -124,7 +124,7 @@ impl CaptureLoop for CallTracing {
       // during call tracing, only moduleID-functionID messages are sent to us
       let fn_id: u32 = buff
         .unaligned_shift_num_read()
-        .map_err(|e| e.context("funciton id"))?;
+        .map_err(|e| anyhow!("funciton id reception error: {e}"))?;
       lg.trace(format!("M {:02X}", *mod_id));
       lg.trace(format!("F {fn_id:02X}"));
 

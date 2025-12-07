@@ -73,7 +73,8 @@ impl ShmemHandle {
 
   pub fn try_mmap(path: &CStr, len: u32) -> Result<Self> {
     let unlinking_handler = |error_string: String| {
-      let unlink_res = try_shm_unlink_fd(path).map_err(|e| e.context(error_string.clone()));
+      let unlink_res =
+        try_shm_unlink_fd(path).map_err(|e| anyhow!("{e} - message: {error_string}"));
 
       match unlink_res {
         Ok(_) => anyhow!(error_string),

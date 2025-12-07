@@ -25,10 +25,10 @@ impl FunctionPacketDumper {
     let name = function_id.hex_string();
     let path = root.join(name);
     let f = File::create_new(&path).map_err(|e| {
-      anyhow!(e).context(format!(
-        "New function capture file creation failed: {:?}",
+      anyhow!(
+        "New function capture file creation failed: path: {:?} error: {e}",
         &path
-      ))
+      )
     })?;
     let b = BufWriter::with_capacity(buffer_capacity_hint, f);
 
@@ -45,7 +45,7 @@ impl FunctionPacketDumper {
     let n = self
       .underlying_file
       .write(&(packet_payload.len() as u32).to_le_bytes())
-      .map_err(|e| anyhow!(e).context("Packet length dump failed"))?;
+      .map_err(|e| anyhow!("Packet length dump failed: {e}"))?;
     self
       .underlying_file
       .write(packet_payload)
@@ -77,7 +77,7 @@ impl ModulePacketDumper {
     let dir_name = module_id.hex_string();
     let module_root = packet_root.join(dir_name.clone());
     std::fs::create_dir_all(&module_root)
-      .map_err(|e| anyhow!(e).context(format!("Folder creation: {dir_name}")))?;
+      .map_err(|e| anyhow!("Folder creation: {dir_name} failed: {e}"))?;
 
     let mut func_dumpers = HashMap::new();
 
@@ -271,14 +271,14 @@ impl PacketReader {
   pub fn read_next_packet(&mut self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
     let mut it = self
       .get_locked_capture_iterator(id)
-      .map_err(|e| e.context("read_next_packet"))?;
+      .map_err(|e| anyhow!("read_next_packet failed: {e}"))?;
     it.read_next_packet()
   }
 
   pub fn try_reset(&mut self, id: NumFunUid) -> Result<()> {
     let mut it = self
       .get_locked_capture_iterator(id)
-      .map_err(|e| e.context("try_reset"))?;
+      .map_err(|e| anyhow!("try_reset failed: {e}"))?;
     it.try_reset()
   }
 

@@ -3,7 +3,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -48,7 +48,7 @@ fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPubli
       &params.data_semaphore_name,
       &params.ack_semaphore_name,
     )
-    .context("cleanup required")?,
+    .map_err(|e| anyhow!("{e}\ncleanup required..."))?,
   )))
 }
 
@@ -178,6 +178,9 @@ async fn main() -> Result<()> {
         infra_params,
       )
       .await;
+      if let Err(e) = &result {
+        lg.crit(format!("error in capture {e}"));
+      }
 
       lg.progress("Shutting down tracing infrastructure...");
       let real_result = tracing_infra
@@ -212,7 +215,7 @@ async fn main() -> Result<()> {
       lg.progress("Setting up function packet reader");
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
-        .map_err(|e| anyhow!(e).context("Packet reader setup failed"))?;
+        .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
 
       if let Some(inspection_spec) = inspect_packet {
         return crate::stages::testing::inspect_packet(
@@ -300,7 +303,7 @@ async fn main() -> Result<()> {
 
       lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
-      let defer_res_joins = svr.await.map_err(|e| anyhow!(e).context("joins"));
+      let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
       lg.progress("reporting results");
       let delayed_err = {
         let rmx: Result<Mutex<Vec<LogResult>>, Arc<Mutex<Vec<LogResult>>>> =
