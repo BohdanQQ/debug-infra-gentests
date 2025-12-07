@@ -110,7 +110,18 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
           return isTargetTypeValRefPtr(TypeName,
                                        "class std::basic_string<char>");
         });
+    
+    // Make this dynamic, please Q_Q
+    encodeArgIndiciesSatisfying(LLCAP_TYPE_STD_VECINT, FD, [](ParmVarDecl* Arg, size_t Idx) {
+      auto TypeName =  Arg->getType().getCanonicalType().getAsString();
+      return isTargetTypeValRefPtr(TypeName, "class std::vector<int>");
+    });
 
+    encodeArgIndiciesSatisfying(LLCAP_TYPE_STD_VECSTR, FD, [](ParmVarDecl* Arg, size_t Idx) {
+      auto TypeName =  Arg->getType().getCanonicalType().getAsString();
+      return isTargetTypeValRefPtr(TypeName, "class std::vector<class std::basic_string<char> >");
+    });
+    
     // are unsigned numeric types
     encodeArgIndiciesSatisfying(
         LLCAP_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {

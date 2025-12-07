@@ -4,6 +4,7 @@
 #include "shm_commons.h"
 #include <array>
 #include <cassert>
+#include <concepts>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -11,6 +12,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <functional>
+#include <google/protobuf/arena.h>
 #include <iostream>
 #include <ostream>
 #include <stdbool.h>
@@ -537,6 +540,25 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
     hook_t<argt, storaget>(n, target, module, fn);                             \
   }
 
+#define TYPE_T_IS(t, ty) (std::is_same_v<std::remove_cv_t<t>, ty>)
+
+template <typename T>
+  requires std::copy_constructible<T>
+static bool assign(T &dest, const T &src) {
+  dest = src;
+  return true;
+}
+
+static bool assign_stringwrap(std::string &dest, const llcaproto::StringWrap &src) {
+  const auto &str_val = src.value();
+  dest.reserve(src.capacity());
+  dest.resize(str_val.size());
+  if (nullptr != str_val.data()) {
+    std::memcpy(dest.data(), str_val.data(), str_val.size());
+  }
+  return true;
+}
+
 // ensures that
 template <typename Tgt, typename Src>
 concept ConvertibleIsh =
@@ -544,13 +566,52 @@ concept ConvertibleIsh =
     (sizeof(Src) <= sizeof(Tgt)) &&    // the Target can fit the Src byte-wise
     (std::is_signed_v<Tgt> == std::is_signed_v<Src>); // sign is the same
 
+template <typename T, typename NumT>
+  requires std::copy_constructible<T> && ConvertibleIsh<T, NumT>
+static bool capture_into(llcaproto::SingleArgVariant *capture, NumT n) {
+  if constexpr (TYPE_T_IS(T, float)) {
+    capture->set_flt(n);
+  } else if constexpr (TYPE_T_IS(T, double)) {
+    capture->set_dbl(n);
+  } else if constexpr (TYPE_T_IS(T, int32_t)) {
+    std::cerr << "capture i32" << std::endl;
+    capture->set_i32(n);
+  } else if constexpr (TYPE_T_IS(T, uint32_t)) {
+    capture->set_u32(n);
+  } else if constexpr (TYPE_T_IS(T, int64_t)) {
+    capture->set_i64(n);
+  } else if constexpr (TYPE_T_IS(T, uint64_t)) {
+    capture->set_u64(n);
+  } else {
+    static_assert(false, "invalid type");
+  }
+  std::cerr << "capture end" << std::endl;
+  return true;
+}
+
+static bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
+                               const std::string &str) {
+  if (str.size() > UINT32_MAX) {
+    perror("strhook cerr: size error");
+    return false;
+  }
+  ::llcaproto::StringWrap *protoString =
+      google::protobuf::Arena::Create<llcaproto::StringWrap>(&s_arena);
+
+  protoString->set_capacity(str.capacity());
+  // FIXME: avoid this copy?
+  protoString->set_value(str);
+  capture->set_allocated_str(protoString);
+  return true;
+}
+
 // NumT - numeric type for which we're creating the hook
 // StorageT - the type to be used to store the NumT inside a protobuf
 template <class NumT, class StorageT>
   requires ConvertibleIsh<StorageT, NumT>
 static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
 #define COPY_AND_RETURN                                                        \
-  *(target) = (n);                                                             \
+  assign<NumT>(*(target), (n));                                                \
   return
   if (in_testing_mode()) {
     if (!is_fn_under_test((module), (fn))) {
@@ -577,7 +638,7 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
     /* is safe assuming the incoming messages are of correct order */          \
     *target = static_cast<NumT>(arg->fun());                                   \
   } while (false)
-#define STORAGE_T_IS(ty) (std::is_same_v<std::remove_cv_t<StorageT>, ty>)
+#define STORAGE_T_IS(ty) (TYPE_T_IS(StorageT, ty))
       // 1. check protobuf type
       // 2. obtain the value from the protobuf
       // 3. rewrite the target (hijack)
@@ -605,22 +666,7 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
   }
   // register value into the static argument packet protobuf
   auto *v = s_capptured_args->add_values();
-  // again, this exists due to protobuf's accessors
-  if constexpr (STORAGE_T_IS(float)) {
-    v->set_flt(n);
-  } else if constexpr (STORAGE_T_IS(double)) {
-    v->set_dbl(n);
-  } else if constexpr (STORAGE_T_IS(int32_t)) {
-    v->set_i32(n);
-  } else if constexpr (STORAGE_T_IS(uint32_t)) {
-    v->set_u32(n);
-  } else if constexpr (STORAGE_T_IS(int64_t)) {
-    v->set_i64(n);
-  } else if constexpr (STORAGE_T_IS(uint64_t)) {
-    v->set_u64(n);
-  } else {
-    static_assert(false, "invalid type");
-  }
+  capture_into<StorageT>(v, n);
 #undef STORAGE_T_IS
   COPY_AND_RETURN;
 #undef COPY_AND_RETURN
@@ -667,30 +713,169 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
       exit(HOOKLIB_EC_TX_FIN);
     }
     const auto &str_arg = arg->str();
-    const auto &str_val = str_arg.value();
-    (*target)->reserve(str_arg.capacity());
-    (*target)->resize(str_val.size());
-    if (nullptr != str_val.data()) {
-      std::memcpy((*target)->data(), str_val.data(), str_val.size());
-    }
+    assign_stringwrap(**target, str_arg);
     return;
   } else {
     // argument capture
-    if (str->size() > UINT32_MAX) {
-      perror("strhook cerr: size error");
+    auto *v = s_capptured_args->add_values();
+    if (!capture_stringwrap(v, *str)) {
       return;
     }
-    auto *v = s_capptured_args->add_values();
-    ::llcaproto::StringWrap *protoString =
-        google::protobuf::Arena::Create<llcaproto::StringWrap>(&s_arena);
-
-    protoString->set_capacity(str->capacity());
-    // FIXME: avoid this copy?
-    protoString->set_value(*str);
-    v->set_allocated_str(protoString);
   }
 move_string_to_target:
   // implementation detail: it str is an in/out argument, the caller of the
   // instrumented function will not
   *target = str;
 }
+
+template <typename T, typename RetT>
+using VariantExtractor = RetT (llcaproto::SingleArgVariant::*)() const;
+template <typename T>
+using VariantChecker = bool (llcaproto::SingleArgVariant::*)() const;
+
+template <typename X, typename RetT>
+static bool make_one_at(X &target, const llcaproto::SingleArgVariant &source,
+                        VariantExtractor<X, RetT> extractor,
+                        VariantChecker<X> checker,
+                        const std::function<bool(X &, RetT)> &constructor) {
+  if (!(source.*(checker))()) {
+    return false;
+  } else {
+    RetT ex = (source.*(extractor))();
+    return constructor(target, ex);
+  }
+}
+
+template <typename T>
+  requires(!std::is_same_v<bool, T>)
+static void llcap_gen_vec_not_bool(std::vector<T> *vec, std::vector<T> **target,
+                                   uint32_t module, uint32_t function) {
+#define TYPE_IS(ty) (TYPE_T_IS(T, ty))
+  bool constexpr IS_PRIMITIVE = TYPE_IS(int32_t) || TYPE_IS(int64_t) ||
+                                TYPE_IS(float) || TYPE_IS(double) ||
+                                TYPE_IS(uint64_t) || TYPE_IS(uint32_t);
+  if (in_testing_mode()) {
+    if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
+      goto move_vec_to_target;
+    }
+    // up to this point, the logic is the same as with primitive types
+    *target = new std::vector<T>();
+    // we "consume" from the packet in the exact same order as we
+    // "push" in the argument capture (below)
+    const auto *arg = get_next_arg();
+    if (nullptr == arg) {
+      perror("strhook terr: size, capacity\n");
+      exit(HOOKLIB_EC_PKT_RD);
+    }
+    if (!arg->has_vec()) {
+      perror("Serious error - unexpected argument type\n");
+      exit(HOOKLIB_EC_TX_FIN);
+    }
+    const auto &vec_arg = arg->vec();
+    (*target)->reserve(vec_arg.capacity());
+    (*target)->resize(static_cast<size_t>(vec_arg.values_size()));
+
+    using ExtractedT = std::conditional_t<
+        IS_PRIMITIVE, T,
+        std::conditional_t<TYPE_IS(std::string), const llcaproto::StringWrap &,
+                           void>>;
+
+    VariantExtractor<T, ExtractedT> extractor;
+    VariantChecker<T> checker;
+    std::function<bool(T &, ExtractedT)> constructor;
+#define ASSIGN_VARS(fn_name, t)                                                \
+  checker = &llcaproto::SingleArgVariant::has_##fn_name;                       \
+  extractor = &llcaproto::SingleArgVariant::fn_name;                           \
+  constructor = &assign<t>
+
+    if constexpr (TYPE_IS(float)) {
+      ASSIGN_VARS(flt, float);
+    } else if constexpr (TYPE_IS(double)) {
+      ASSIGN_VARS(dbl, double);
+    } else if constexpr (TYPE_IS(int32_t)) {
+      ASSIGN_VARS(i32, int32_t);
+    } else if constexpr (TYPE_IS(uint32_t)) {
+      ASSIGN_VARS(u32, uint32_t);
+    } else if constexpr (TYPE_IS(int64_t)) {
+      ASSIGN_VARS(i64, int64_t);
+    } else if constexpr (TYPE_IS(uint64_t)) {
+      ASSIGN_VARS(u64, uint64_t);
+    } else if constexpr (TYPE_IS(std::string)) {
+      checker = &llcaproto::SingleArgVariant::has_str;
+      extractor = &llcaproto::SingleArgVariant::str;
+      constructor = &assign_stringwrap;
+    } else {
+      static_assert(false, "invalid type");
+    }
+
+    auto &target_vec = **target;
+    for (int i = 0; i < vec_arg.values_size(); ++i) {
+      const auto &source_val = vec_arg.values(i);
+      auto &target_val = target_vec[static_cast<size_t>(i)];
+      if (!make_one_at(target_val, source_val, extractor, checker,
+                       constructor)) {
+        perror("Could not make element at index");
+        return;
+      }
+    }
+    return;
+  } else {
+    // argument capture
+    auto *v = s_capptured_args->add_values();
+    std::cerr << "args addval" << std::endl;
+    llcaproto::Vector *protoVec =
+        google::protobuf::Arena::Create<llcaproto::Vector>(&s_arena);
+    if (nullptr == protoVec) {
+      std::cerr << "protovec" << std::endl;
+      exit(HOOKLIB_EC_IMPL);
+    }
+    std::cerr << "protovec alloc" << std::endl;
+    protoVec->set_capacity(vec->capacity());
+    auto it = vec->cbegin();
+    for (; it != vec->cend(); ++it) {
+      std::cerr << "protovec iteration" << std::endl;
+      auto *vecItemVariant = protoVec->add_values();
+      if (nullptr == vecItemVariant) {
+        perror("protovec");
+        exit(HOOKLIB_EC_IMPL);
+      }
+      if constexpr (TYPE_IS(float)) {
+        capture_into<float>(vecItemVariant, *it);
+      } else if constexpr (TYPE_IS(double)) {
+        capture_into<double>(vecItemVariant, *it);
+      } else if constexpr (TYPE_IS(int32_t)) {
+        std::cerr << "capture start expected" << std::endl;
+        capture_into<int32_t>(vecItemVariant, *it);
+        std::cerr << "capture start end" << std::endl;
+      } else if constexpr (TYPE_IS(uint32_t)) {
+        capture_into<uint32_t>(vecItemVariant, *it);
+      } else if constexpr (TYPE_IS(int64_t)) {
+        capture_into<int64_t>(vecItemVariant, *it);
+      } else if constexpr (TYPE_IS(uint64_t)) {
+        capture_into<uint64_t>(vecItemVariant, *it);
+      } else if constexpr (TYPE_IS(std::string)) {
+        if (!capture_stringwrap(vecItemVariant, *it)) {
+          return;
+        }
+      } else {
+        static_assert(false, "invalid type");
+      }
+    }
+    std::cerr << "set allocated vec" << std::endl;
+    v->set_allocated_vec(protoVec);
+  }
+move_vec_to_target:
+  *target = vec;
+}
+
+#define MAKE_VECTOR_HOOK(id, type)                                             \
+  GEN_FN_VECDECL(id, type) {                                                   \
+    llcap_gen_vec_not_bool<type>(vec, target, module, function);               \
+  }
+
+// FIXME: crashes at the end of the program execution...
+// TODO: documentation
+MAKE_VECTOR_HOOK(cint, int32_t)
+// MAKE_VECTOR_HOOK(cuint, uint32_t)
+// MAKE_VECTOR_HOOK(cfloat, float)
+MAKE_VECTOR_HOOK(stdstring, std::string)

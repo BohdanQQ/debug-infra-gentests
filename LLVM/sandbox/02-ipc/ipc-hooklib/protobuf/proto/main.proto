@@ -11,6 +11,7 @@ message SingleArgVariant {
     uint64 u64 = 20;
     bytes arbitrary = 22;
     StringWrap str = 24;
+    Vector vec = 26;
     // add your type here
     // - note: for repeated types, use your own new Message
   }
@@ -20,10 +21,14 @@ message Arguments {
   repeated SingleArgVariant values = 1;
 }
 
-
 message StringWrap {
   string value = 10;
   uint64 capacity = 12;
+}
+
+message Vector {
+  uint64 capacity = 10;
+  repeated SingleArgVariant values = 12;
 }
 
 

@@ -93,6 +93,8 @@ struct SCustomTypeDescription {
 // and instrumentation is done via pointer/reference
 const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
     {LLCAP_TYPE_STD_STRING, LlcapSizeType::LLSZ_CUSTOM},
+    {LLCAP_TYPE_STD_VECINT, LlcapSizeType::LLSZ_CUSTOM},
+    {LLCAP_TYPE_STD_VECSTR, LlcapSizeType::LLSZ_CUSTOM},
     // invalid size means
     // that this type index is just a "flag" and
     // has no effect on the "real argument size" that the instrumentation will
@@ -102,7 +104,13 @@ const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
 const std::unordered_map<const char *, SCustomTypeDescription> SCustomHooks{
     {LLCAP_TYPE_STD_STRING,
      SCustomTypeDescription{.m_hookFnName = "llcap_hooklib_extra_cxx_string",
-                            .m_log_name = "std::string"}}};
+                            .m_log_name = "std::string"}},
+    {LLCAP_TYPE_STD_VECINT,
+     SCustomTypeDescription{.m_hookFnName = "llcap_vector_cint",
+                            .m_log_name = "std::vector<int>"}},
+    {LLCAP_TYPE_STD_VECSTR,
+     SCustomTypeDescription{.m_hookFnName = "llcap_vector_stdstring",
+                            .m_log_name = "std::vector<string>"}}};
 
 // creates argument index mapping for a particular function, taking into account
 // all of the above-registered custom type metadata keys
@@ -590,8 +598,9 @@ llvm::Value *insertArgCapturePreambleHooks(IRBuilder<> &Builder, Module &M,
   return Builder.CreateICmpEQ(TestCall, Val);
 }
 
-void insertArgCaptureArgEpilogueHook(IRBuilder<> &Builder, Module &M, const common::SFnUidConstants &C) {
-   common::insertInfraFnCall(Builder, M, "hook_arg_epilogue", C);
+void insertArgCaptureArgEpilogueHook(IRBuilder<> &Builder, Module &M,
+                                     const common::SFnUidConstants &C) {
+  common::insertInfraFnCall(Builder, M, "hook_arg_epilogue", C);
 }
 
 void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
