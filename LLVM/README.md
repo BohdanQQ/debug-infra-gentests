@@ -290,7 +290,7 @@ TC --> END : monitor\nuntil timeout
 ' ==== Monitoring / side channels ====
 
 
-SERVER --> FS : load captured\narguments
+SERVER <-- FS : load captured\narguments
 SERVER --> BR : monitor
 TC --> SERVER : report test\nresults
 
