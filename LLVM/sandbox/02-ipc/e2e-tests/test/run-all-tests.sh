@@ -76,6 +76,10 @@ function run-tests-with-buffers {
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call-rv" "test_target" 5 "$Size" "$Count"
   # exceptions without cleanup calls, inner (exception-throwing) calls without a return value
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call" "test_target" 5 "$Size" "$Count"
+  # vector<string> (nested protobuf)
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str" "test_target" 5 "$Size" "$Count"
+  # vector<int> (protobuf vec)
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-i32" "test_target" 5 "$Size" "$Count"
 }
 
 # the defaults of the llcap-server
