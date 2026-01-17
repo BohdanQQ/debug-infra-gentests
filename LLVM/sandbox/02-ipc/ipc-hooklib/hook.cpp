@@ -687,7 +687,6 @@ static void llcap_gen_vec_not_bool(std::vector<T> *vec, std::vector<T> **target,
       goto move_vec_to_target;
     }
     // up to this point, the logic is the same as with primitive types
-    std::cerr << "hijack " << std::endl;
     *target = new std::vector<T>();
     // we "consume" from the packet in the exact same order as we
     // "push" in the argument capture (below)
