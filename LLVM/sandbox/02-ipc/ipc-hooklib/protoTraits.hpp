@@ -1,10 +1,9 @@
 #include "protobuf/proto/main.pb.h"
 #include <type_traits>
 
-#define CHECK_EXTRACT_PAIR(fn_name, t)                                         \
-  auto checker = &llcaproto::SingleArgVariant::has_##fn_name;                  \
-  VariantExtractor<t> extractor = &llcaproto::SingleArgVariant::fn_name;       \
-  return std::make_pair(checker, extractor)
+#define CHECK_EXTRACT_PAIR(fn_name, t)                              \
+  return {  .checker = &llcaproto::SingleArgVariant::has_##fn_name, \
+            .extractor = &llcaproto::SingleArgVariant::fn_name  }
 
 template <typename T>
   requires std::copy_constructible<T>
@@ -43,9 +42,15 @@ using VariantChecker = bool (llcaproto::SingleArgVariant::*)() const;
 
 template <class T> class ProtobufNestTrait {};
 
+template<class ResT>
+struct VariantMembers {
+  VariantChecker checker;
+  VariantExtractor<ResT> extractor;
+};
+
 #define T_IS(S) std::is_same_v<T, S>
 template <class T, class ResT>
-consteval std::pair<VariantChecker, VariantExtractor<ResT>> primitiveChecker() {
+consteval VariantMembers<ResT> primitiveChecker() {
 
   if constexpr (T_IS(float)) {
     CHECK_EXTRACT_PAIR(flt, ResT);
@@ -63,7 +68,7 @@ consteval std::pair<VariantChecker, VariantExtractor<ResT>> primitiveChecker() {
     VariantChecker checker = &llcaproto::SingleArgVariant::has_str;
     VariantExtractor<const llcaproto::StringWrap &> extractor =
         &llcaproto::SingleArgVariant::str;
-    return std::make_pair(checker, extractor);
+    return { checker, extractor };
   } else {
     static_assert(false, "unsupported type");
   }
@@ -101,9 +106,14 @@ static bool capture_into(llcaproto::SingleArgVariant *capture, NumT n) {
 template <class T>
   requires(IS_PROTO_PRIMITIVE_V<T> && !IS_PROTO_FALLBACK_PRIMITIVE_V<T>)
 struct ProtobufNestTrait<T> {
-  using ExtractorType = VariantExtractor<T>;
-  constexpr static ExtractorType extractor = primitiveChecker<T, T>().second;
-  constexpr static VariantChecker checker = primitiveChecker<T, T>().first;
+  // this pattern might be abstractable into CRTP, not sure though
+  static constexpr auto MEMBERS = primitiveChecker<T, T>();
+  constexpr static T extract(const llcaproto::SingleArgVariant& v) {
+    return (v.*(MEMBERS.extractor))();
+  }
+  constexpr static bool check(const llcaproto::SingleArgVariant& v) {
+    return (v.*MEMBERS.checker)();
+  }
   constexpr static bool construct(T &dest, T src) {
     return assign<T>(dest, src);
   }
@@ -115,11 +125,13 @@ struct ProtobufNestTrait<T> {
 template <class T>
   requires(IS_PROTO_FALLBACK_PRIMITIVE_V<T>)
 struct ProtobufNestTrait<T> {
-  using ExtractorType = VariantExtractor<uint64_t>;
-  constexpr static ExtractorType extractor =
-      primitiveChecker<T, uint64_t>().second;
-  constexpr static VariantChecker checker =
-      primitiveChecker<T, uint64_t>().first;
+  static constexpr auto MEMBERS = primitiveChecker<T, uint64_t>();
+  constexpr static T extract(const llcaproto::SingleArgVariant& v) {
+    return (v.*(MEMBERS.extractor))();
+  }
+  constexpr static bool check(const llcaproto::SingleArgVariant& v) {
+    return (v.*MEMBERS.checker)();
+  }
   constexpr static bool construct(T &dest, T src) {
     return assign<T>(dest, src);
   }
@@ -128,14 +140,14 @@ struct ProtobufNestTrait<T> {
   }
 };
 
-bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
+inline bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
                         const std::string &str,
                         google::protobuf::Arena *arena) {
   if (str.size() > UINT32_MAX) {
     perror("strhook cerr: size error");
     return false;
   }
-  ::llcaproto::StringWrap *protoString =
+  auto* protoString =
       google::protobuf::Arena::Create<llcaproto::StringWrap>(arena);
 
   protoString->set_capacity(str.capacity());
@@ -147,14 +159,19 @@ bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
 
 template <> struct ProtobufNestTrait<std::string> {
   using ExtractorType = VariantExtractor<const llcaproto::StringWrap &>;
-  // member function pointer to the protobuf-generated member function that GETs
-  // the a reference to the protoBuf type representing the wrapper around the
-  // custom type - here std::string is wrapped in a StringWrap
-  constexpr static ExtractorType extractor = &llcaproto::SingleArgVariant::str;
-  // same, just with checking the presence of the wrapper type
-  constexpr static VariantChecker checker =
-      &llcaproto::SingleArgVariant::has_str;
+  // defines the SingleArgVariant member functions that are used to extract/check presence of a
+  // value inside the variant
+  static constexpr auto MEMBERS = VariantMembers{
+    .checker = &llcaproto::SingleArgVariant::has_str,
+    .extractor = &llcaproto::SingleArgVariant::str
+  };
 
+  constexpr static llcaproto::StringWrap extract(const llcaproto::SingleArgVariant& v) {
+    return (v.*(MEMBERS.extractor))();
+  }
+  constexpr static bool check(const llcaproto::SingleArgVariant& v) {
+    return (v.*(MEMBERS.checker))();
+  }
   // --- used in argument hijacking
   // returns a function wrapper that
   // takes in a MUTABLE reference to a target string

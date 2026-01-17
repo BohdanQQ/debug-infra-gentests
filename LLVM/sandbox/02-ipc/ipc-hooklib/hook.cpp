@@ -601,20 +601,15 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
       // 1. check protobuf type
       // 2. obtain the value from the protobuf
       // 3. rewrite the target (hijack)
-
-      typename ProtobufNestTrait<StorageT>::ExtractorType extractor =
-          ProtobufNestTrait<StorageT>::extractor;
-      VariantChecker checker = ProtobufNestTrait<StorageT>::checker;
-
-      bool ok = ((arg)->*(checker))();
-      if (!ok) {
+      using NestTrait = ProtobufNestTrait<StorageT>;
+      if (!NestTrait::check(*arg)) {
         perror("Serious error - unexpected argument type @ hook_t \n");
         std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>()
                   << std::endl;
         exit(HOOKLIB_EC_TX_FIN);
       }
       /* is safe assuming the incoming messages are of correct order */
-      *target = static_cast<NumT>(((arg)->*(extractor))());
+      *target = static_cast<NumT>(NestTrait::extract(*arg));
     }
     return;
   }
@@ -683,14 +678,12 @@ move_string_to_target:
 
 template <typename T>
 static bool make_one_at(T &target, const llcaproto::SingleArgVariant &source) {
-  using ExtractorType = typename ProtobufNestTrait<T>::ExtractorType;
-  ExtractorType extractor = ProtobufNestTrait<T>::extractor;
-  VariantChecker checker = ProtobufNestTrait<T>::checker;
+  using NestTrait = ProtobufNestTrait<T>;
 
-  if (!(source.*(checker))()) {
+  if (!NestTrait::check(source)) {
     return false;
   } else {
-    auto ex = (source.*(extractor))();
+    auto ex = NestTrait::extract(source);
     return ProtobufNestTrait<T>::construct(target, ex);
   }
 }
