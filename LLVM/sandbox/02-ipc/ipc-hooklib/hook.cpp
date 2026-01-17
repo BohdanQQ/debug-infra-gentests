@@ -3,7 +3,9 @@
 #include "protoTraits.hpp"
 #include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <csignal>
 #include <cstddef>
@@ -15,8 +17,9 @@
 #include <google/protobuf/arena.h>
 #include <iostream>
 #include <ostream>
-#include <stdbool.h>
+#include <ranges>
 #include <string>
+#include <string_view>
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -40,11 +43,11 @@
 
 static int s_server_socket = -1;
 
+template <typename T, std::size_t S> using Arr = std::array<T, S>;
+
 static bool connect_to_server(const char *path) {
   // https://beej.us/guide/bgipc/html/split/unixsock.html#unixsock
-  socklen_t len;
-  struct sockaddr_un remote;
-  remote.sun_family = AF_UNIX;
+  struct sockaddr_un remote{.sun_family = AF_UNIX, .sun_path = ""};
 
   s_server_socket = socket(AF_UNIX, SOCK_STREAM, 0);
   if (s_server_socket == -1) {
@@ -53,9 +56,10 @@ static bool connect_to_server(const char *path) {
   }
   // 108 is the limith of the sun_path field
   constexpr size_t SUN_PATH_MAX_LEN = 108;
-  strncpy(remote.sun_path, path, SUN_PATH_MAX_LEN);
-  len = static_cast<socklen_t>(strnlen(remote.sun_path, SUN_PATH_MAX_LEN) +
-                               sizeof(remote.sun_family));
+  strncpy(static_cast<char *>(remote.sun_path), path, SUN_PATH_MAX_LEN);
+  auto len = static_cast<socklen_t>(
+      strnlen(static_cast<char *>(remote.sun_path), SUN_PATH_MAX_LEN) +
+      sizeof(remote.sun_family));
   // reinterpret_cast should be legal here... (otherwise there is only C-style
   // cast)
   if (connect(s_server_socket, reinterpret_cast<struct sockaddr *>(&remote),
@@ -67,8 +71,9 @@ static bool connect_to_server(const char *path) {
   return true;
 }
 
-static bool do_srv_send(void *data, size_t size, const char *desc) {
-  if (send(s_server_socket, data, size, 0) == -1) {
+template <size_t Sz>
+static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
+  if (send(s_server_socket, message.data(), message.size(), 0) == -1) {
     std::cerr << "Failed to send " << desc << std::endl;
     perror("");
     close(s_server_socket);
@@ -94,19 +99,51 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
   return true;
 }
 
-#define MSG_SIZE 16
+constexpr std::size_t MSG_SIZE{16};
+
+template <size_t OutSz, size_t InSz>
+static void copy_into_impl(Arr<char, OutSz> &target, size_t shift,
+                           const std::array<char, InSz> &in) {
+  namespace rang = std::ranges;
+  rang::copy(in, target.begin() + shift);
+}
+
+template <size_t OutSz, size_t InSz, size_t... InSzS>
+static void copy_into_impl(std::array<char, OutSz> &target, size_t shift,
+                           const std::array<char, InSz> &in,
+                           const std::array<char, InSzS> &...others) {
+  namespace rang = std::ranges;
+  rang::copy(in, target.begin() + shift);
+  copy_into_impl(target, shift + in.size(), others...);
+}
+
+template <size_t OutSz, typename... InS>
+static void copy_into(std::array<char, OutSz> &target, InS... vals) {
+  static_assert(target.size() >= (sizeof(vals) + ...),
+                "values must fit the target");
+  copy_into_impl(target, 0ULL, std::bit_cast<Arr<char, sizeof(vals)>>(vals)...);
+}
+
+template <size_t OutSz, typename... InS>
+static Arr<char, OutSz> make_message(InS... vals) {
+  Arr<char, OutSz> result{'\0'};
+  ;
+  copy_into(result, vals...);
+  return result;
+}
 
 static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
-  char message[MSG_SIZE];
-  static_assert(sizeof(TAG_START) + sizeof(mod) + sizeof(fun) +
-                        sizeof(call_idx) <=
-                    MSG_SIZE &&
-                sizeof(TAG_START) == 2 && sizeof(mod) == 4 && sizeof(fun) == 4);
-  memcpy(message, &TAG_START, sizeof(TAG_START));
-  memcpy(message + 2, &mod, sizeof(mod));
-  memcpy(message + 6, &fun, sizeof(fun));
-  memcpy(message + 10, &call_idx, sizeof(call_idx));
-  return do_srv_send(message, sizeof(message), "msg start");
+  auto message = make_message<MSG_SIZE>(TAG_START, mod, fun, call_idx);
+  return do_srv_send(message, "msg start");
+}
+
+template <typename T, size_t InS>
+static T take_into(const std::array<char, InS> &in) {
+  static_assert(InS >= sizeof(T),
+                "input must be at least as large as the desired output");
+  std::array<char, sizeof(T)> tArr{'\0'};
+  std::ranges::copy(in | std::views::take(sizeof(T)), tArr.begin());
+  return std::bit_cast<T>(tArr);
 }
 
 // regardless of return type, the target must be freed by caller
@@ -114,20 +151,17 @@ static bool request_packet_from_server(uint64_t index, void **target,
                                        uint32_t *packet_size) {
   *target = NULL;
   *packet_size = 0;
-  char message[MSG_SIZE];
-  static_assert(sizeof(TAG_PKT) == 2 &&
-                sizeof(TAG_PKT) + sizeof(index) <= MSG_SIZE);
+  auto message = make_message<MSG_SIZE>(TAG_PKT, index);
+  if (!do_srv_send(message, "pktrq")) {
+    return false;
+  }
 
-  memcpy(message, &TAG_PKT, sizeof(TAG_PKT));
-  memcpy(message + 2, &index, sizeof(index));
-  if (!do_srv_send(message, sizeof(message), "pktrq")) {
-    return false;
-  }
   size_t pkt_size = 0;
-  if (!do_srv_recv(message, sizeof(uint32_t), "pkt sz")) {
+  auto *pMsg = message.data();
+  if (!do_srv_recv(pMsg, sizeof(uint32_t), "pkt sz")) {
     return false;
   }
-  pkt_size = static_cast<size_t>(*reinterpret_cast<uint32_t *>(message));
+  pkt_size = static_cast<size_t>(take_into<uint32_t>(message));
   void *buff = malloc(pkt_size);
   *target = buff;
   if (buff == NULL) {
@@ -156,33 +190,21 @@ enum class EMsgEnd : uint8_t {
 
 static uint16_t get_tag(EMsgEnd end_type) {
   constexpr uint8_t ENUM_LEN = std::to_underlying(EMsgEnd::MSG_END_COUNT);
-  return std::array<uint16_t, ENUM_LEN>{TAG_TIMEOUT, TAG_SGNL, TAG_EXIT,
-                                        TAG_PASS,    TAG_EXC,  TAG_FATAL}
-      [std::to_underlying(end_type)];
+  static constexpr std::array<uint16_t, ENUM_LEN> VALUES{
+      TAG_TIMEOUT, TAG_SGNL, TAG_EXIT, TAG_PASS, TAG_EXC, TAG_FATAL};
+  return VALUES[std::to_underlying(end_type)];
 }
 
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
   uint16_t tag = get_tag(end_type);
-
-  char message[MSG_SIZE];
-  static_assert(
-      sizeof(TAG_TEST_END) + sizeof(index) + sizeof(tag) + sizeof(status) <=
-          MSG_SIZE &&
-      sizeof(TAG_TEST_END) == 2 && sizeof(index) == 8 && sizeof(tag) == 2);
-  memcpy(message, &TAG_TEST_END, 2);
-  memcpy(message + 2, &index, sizeof(index));
-  memcpy(message + 10, &tag, sizeof(tag));
-  memcpy(message + 12, &status, sizeof(status));
-  return do_srv_send(message, sizeof(message), "test end msg");
+  auto message = make_message<MSG_SIZE>(TAG_TEST_END, index, tag, status);
+  return do_srv_send(message, "test end msg");
 }
 
 static bool send_finish_message() {
-  char message[MSG_SIZE];
-  static_assert(MSG_SIZE >= sizeof(TAG_TEST_FINISH));
-
-  memcpy(message, &TAG_TEST_FINISH, sizeof(TAG_TEST_FINISH));
-  return do_srv_send(message, sizeof(message), "test finish msg");
+  auto message = make_message<MSG_SIZE>(TAG_TEST_FINISH);
+  return do_srv_send(message, "test finish msg");
 }
 
 static bool try_wait_pid(pid_t pid, int32_t *status, EMsgEnd *result) {
@@ -277,8 +299,8 @@ static ERequestResult handle_requests(int rq_sock) {
     return ERequestResult::TestException;
   }
 
-  void *packet_ptr;
-  uint32_t packet_size;
+  void *packet_ptr = nullptr;
+  uint32_t packet_size = 0;
   if (!request_packet_from_server(packet_idx, &packet_ptr, &packet_size)) {
     std::cerr << "Pktrq failed pkt idx " << packet_idx << std::endl;
     free(packet_ptr);
@@ -302,9 +324,8 @@ static ERequestResult handle_requests(int rq_sock) {
 
 static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
                                          int timeout_s, int32_t *status) {
-  time_t seconds;
   EMsgEnd result = EMsgEnd::MSG_END_FATAL;
-  seconds = time(NULL);
+  time_t seconds = time(NULL);
   while (true) {
     if (try_wait_pid(pid, status, &result)) {
       if (result == EMsgEnd::MSG_END_STATUS && *status == ENDPASS_CODE) {
@@ -371,9 +392,9 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // (test coordinator)
 
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
-    int sockets[2];
+    std::array<int, 2> sockets { 0 };
 
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == -1) {
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets.data()) == -1) {
       perror("socketpair");
       exit(HOOKLIB_EC_PAIR);
     }
@@ -538,25 +559,21 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
     hook_t<argt, storaget>(n, target, module, fn);                             \
   }
 
-template <class T>
-constexpr static
-std::string_view
-type_name()
-{
-    using namespace std;
+template <class T> constexpr static std::string_view type_name() {
+  using std::string_view;
 #ifdef __clang__
-    string_view p = __PRETTY_FUNCTION__;
-    return string_view(p.data() + 34, p.size() - 34 - 1);
+  string_view p = __PRETTY_FUNCTION__;
+  return { p.data() + 34, p.size() - 34 - 1 };
 #elif defined(__GNUC__)
-    string_view p = __PRETTY_FUNCTION__;
-#  if __cplusplus < 201402
-    return string_view(p.data() + 36, p.size() - 36 - 1);
-#  else
-    return string_view(p.data() + 49, p.find(';', 49) - 49);
-#  endif
+  string_view p = __PRETTY_FUNCTION__;
+#if __cplusplus < 201402
+  return {p.data() + 36, p.size() - 36 - 1};
+#else
+  return {p.data() + 49, p.find(';', 49) - 49};
+#endif
 #elif defined(_MSC_VER)
-    string_view p = __FUNCSIG__;
-    return string_view(p.data() + 84, p.size() - 84 - 7);
+  string_view p = __FUNCSIG__;
+  return {p.data() + 84, p.size() - 84 - 7};
 #endif
 }
 
@@ -585,13 +602,15 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
       // 2. obtain the value from the protobuf
       // 3. rewrite the target (hijack)
 
-      typename ProtobufNestTrait<StorageT>::ExtractorType extractor = ProtobufNestTrait<StorageT>::extractor;
+      typename ProtobufNestTrait<StorageT>::ExtractorType extractor =
+          ProtobufNestTrait<StorageT>::extractor;
       VariantChecker checker = ProtobufNestTrait<StorageT>::checker;
 
       bool ok = ((arg)->*(checker))();
       if (!ok) {
         perror("Serious error - unexpected argument type @ hook_t \n");
-        std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>() << std::endl;
+        std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>()
+                  << std::endl;
         exit(HOOKLIB_EC_TX_FIN);
       }
       /* is safe assuming the incoming messages are of correct order */
@@ -602,7 +621,6 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
   // register value into the static argument packet protobuf
   auto *v = s_capptured_args->add_values();
   capture_into<StorageT>(v, n);
-#undef STORAGE_T_IS
   COPY_AND_RETURN;
 #undef COPY_AND_RETURN
 }
@@ -737,11 +755,11 @@ move_vec_to_target:
     llcap_gen_vec_not_bool<type>(vec, target, module, function);               \
   }
 
-// creates a vector hooking function under the name "llcap_vector_<id>" (here <id> == cint)
-// that captures std::vector<T> (here T == int32_t)
-// currently, T cannot be bool
-// other custom types have to be registered via ProtobufNestTrait
-// for reference, see the std::string specialization: ProtobufNestTrait<std::string>
+// creates a vector hooking function under the name "llcap_vector_<id>" (here
+// <id> == cint) that captures std::vector<T> (here T == int32_t) currently, T
+// cannot be bool other custom types have to be registered via ProtobufNestTrait
+// for reference, see the std::string specialization:
+// ProtobufNestTrait<std::string>
 MAKE_VECTOR_HOOK(cint, int32_t)
 // MAKE_VECTOR_HOOK(cuint, uint32_t)
 // MAKE_VECTOR_HOOK(cfloat, float)

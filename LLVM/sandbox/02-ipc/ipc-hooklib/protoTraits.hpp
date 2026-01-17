@@ -1,8 +1,5 @@
 #include "protobuf/proto/main.pb.h"
-#include <cstdint>
-#include <functional>
 #include <type_traits>
-#include <utility>
 
 #define CHECK_EXTRACT_PAIR(fn_name, t)                                         \
   auto checker = &llcaproto::SingleArgVariant::has_##fn_name;                  \
@@ -27,17 +24,17 @@ static bool assign_stringwrap(std::string &dest,
   return true;
 }
 
-#define TYPE_T_IS(t, ty) (std::is_same_v<t, ty>)
-#define TYPE_IS(ty) (TYPE_T_IS(T, ty))
+template <class T, class... S> consteval bool oneOfT() {
+  return (std::is_same_v<T, S> || ...);
+}
 
 template <class T>
 bool constexpr IS_PROTO_PRIMITIVE_V =
-    TYPE_IS(int32_t) || TYPE_IS(int64_t) || TYPE_IS(float) || TYPE_IS(double) ||
-    TYPE_IS(uint64_t) || TYPE_IS(uint32_t);
+    oneOfT<T, int32_t, int64_t, float, double, uint64_t, uint32_t>();
+
 template <class T>
 bool constexpr IS_PROTO_FALLBACK_PRIMITIVE_V =
-    TYPE_IS(char) || TYPE_IS(unsigned char) || TYPE_IS(short) ||
-    TYPE_IS(unsigned short);
+    oneOfT<T, char, unsigned char, short, unsigned short>();
 
 template <typename RetT>
 using VariantExtractor = RetT (llcaproto::SingleArgVariant::*)() const;
@@ -46,21 +43,23 @@ using VariantChecker = bool (llcaproto::SingleArgVariant::*)() const;
 
 template <class T> class ProtobufNestTrait {};
 
+#define T_IS(S) std::is_same_v<T, S>
 template <class T, class ResT>
 consteval std::pair<VariantChecker, VariantExtractor<ResT>> primitiveChecker() {
-  if constexpr (TYPE_IS(float)) {
+
+  if constexpr (T_IS(float)) {
     CHECK_EXTRACT_PAIR(flt, ResT);
-  } else if constexpr (TYPE_IS(double)) {
+  } else if constexpr (T_IS(double)) {
     CHECK_EXTRACT_PAIR(dbl, ResT);
-  } else if constexpr (TYPE_IS(int32_t)) {
+  } else if constexpr (T_IS(int32_t)) {
     CHECK_EXTRACT_PAIR(i32, ResT);
-  } else if constexpr (TYPE_IS(uint32_t)) {
+  } else if constexpr (T_IS(uint32_t)) {
     CHECK_EXTRACT_PAIR(u32, ResT);
-  } else if constexpr (TYPE_IS(int64_t)) {
+  } else if constexpr (T_IS(int64_t)) {
     CHECK_EXTRACT_PAIR(i64, ResT);
-  } else if constexpr (TYPE_IS(uint64_t) || IS_PROTO_FALLBACK_PRIMITIVE_V<T>) {
+  } else if constexpr (T_IS(uint64_t) || IS_PROTO_FALLBACK_PRIMITIVE_V<T>) {
     CHECK_EXTRACT_PAIR(u64, ResT);
-  } else if constexpr (TYPE_IS(std::string)) {
+  } else if constexpr (T_IS(std::string)) {
     VariantChecker checker = &llcaproto::SingleArgVariant::has_str;
     VariantExtractor<const llcaproto::StringWrap &> extractor =
         &llcaproto::SingleArgVariant::str;
@@ -80,23 +79,24 @@ concept ConvertibleIsh =
 template <typename T, typename NumT>
   requires std::copy_constructible<T> && ConvertibleIsh<T, NumT>
 static bool capture_into(llcaproto::SingleArgVariant *capture, NumT n) {
-  if constexpr (TYPE_T_IS(T, float)) {
+  if constexpr (T_IS(float)) {
     capture->set_flt(n);
-  } else if constexpr (TYPE_T_IS(T, double)) {
+  } else if constexpr (T_IS(double)) {
     capture->set_dbl(n);
-  } else if constexpr (TYPE_T_IS(T, int32_t)) {
+  } else if constexpr (T_IS(int32_t)) {
     capture->set_i32(n);
-  } else if constexpr (TYPE_T_IS(T, uint32_t)) {
+  } else if constexpr (T_IS(uint32_t)) {
     capture->set_u32(n);
-  } else if constexpr (TYPE_T_IS(T, int64_t)) {
+  } else if constexpr (T_IS(int64_t)) {
     capture->set_i64(n);
-  } else if constexpr (TYPE_T_IS(T, uint64_t)) {
+  } else if constexpr (T_IS(uint64_t)) {
     capture->set_u64(n);
   } else {
     static_assert(false, "invalid type");
   }
   return true;
 }
+#undef T_IS
 
 template <class T>
   requires(IS_PROTO_PRIMITIVE_V<T> && !IS_PROTO_FALLBACK_PRIMITIVE_V<T>)
@@ -104,7 +104,9 @@ struct ProtobufNestTrait<T> {
   using ExtractorType = VariantExtractor<T>;
   constexpr static ExtractorType extractor = primitiveChecker<T, T>().second;
   constexpr static VariantChecker checker = primitiveChecker<T, T>().first;
-  constexpr static bool construct(T &dest, T src) { return assign<T>(dest, src); }
+  constexpr static bool construct(T &dest, T src) {
+    return assign<T>(dest, src);
+  }
   static bool variant_capture(llcaproto::SingleArgVariant *capture, T n) {
     return capture_into<T>(capture, n);
   }
@@ -118,7 +120,9 @@ struct ProtobufNestTrait<T> {
       primitiveChecker<T, uint64_t>().second;
   constexpr static VariantChecker checker =
       primitiveChecker<T, uint64_t>().first;
-  constexpr static bool construct(T &dest, T src) { return assign<T>(dest, src); }
+  constexpr static bool construct(T &dest, T src) {
+    return assign<T>(dest, src);
+  }
   static bool variant_capture(llcaproto::SingleArgVariant *capture, T n) {
     return capture_into<T>(capture, n);
   }
