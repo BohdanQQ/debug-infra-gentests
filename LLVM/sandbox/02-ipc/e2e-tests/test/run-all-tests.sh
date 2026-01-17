@@ -80,6 +80,8 @@ function run-tests-with-buffers {
   run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str" "test_target" 5 "$Size" "$Count"
   # vector<int> (protobuf vec)
   run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-i32" "test_target" 5 "$Size" "$Count"
+  # nested protobuf * 2
+  run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str-multiple" "test_target" 5 "$Size" "$Count"
 }
 
 # the defaults of the llcap-server
