@@ -668,13 +668,12 @@ static bool make_one_at(T &target, const llcaproto::SingleArgVariant &source) {
   using ExtractorType = typename ProtobufNestTrait<T>::ExtractorType;
   ExtractorType extractor = ProtobufNestTrait<T>::extractor;
   VariantChecker checker = ProtobufNestTrait<T>::checker;
-  auto constructor = ProtobufNestTrait<T>::getConstructor();
 
   if (!(source.*(checker))()) {
     return false;
   } else {
     auto ex = (source.*(extractor))();
-    return constructor(target, ex);
+    return ProtobufNestTrait<T>::construct(target, ex);
   }
 }
 
@@ -738,7 +737,11 @@ move_vec_to_target:
     llcap_gen_vec_not_bool<type>(vec, target, module, function);               \
   }
 
-// TODO: documentation
+// creates a vector hooking function under the name "llcap_vector_<id>" (here <id> == cint)
+// that captures std::vector<T> (here T == int32_t)
+// currently, T cannot be bool
+// other custom types have to be registered via ProtobufNestTrait
+// for reference, see the std::string specialization: ProtobufNestTrait<std::string>
 MAKE_VECTOR_HOOK(cint, int32_t)
 // MAKE_VECTOR_HOOK(cuint, uint32_t)
 // MAKE_VECTOR_HOOK(cfloat, float)

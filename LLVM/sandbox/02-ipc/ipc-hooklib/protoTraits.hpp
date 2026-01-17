@@ -104,9 +104,7 @@ struct ProtobufNestTrait<T> {
   using ExtractorType = VariantExtractor<T>;
   constexpr static ExtractorType extractor = primitiveChecker<T, T>().second;
   constexpr static VariantChecker checker = primitiveChecker<T, T>().first;
-  constexpr static std::function<bool(T &, T)> getConstructor() {
-    return &assign<T>;
-  }
+  constexpr static bool construct(T &dest, T src) { return assign<T>(dest, src); }
   static bool variant_capture(llcaproto::SingleArgVariant *capture, T n) {
     return capture_into<T>(capture, n);
   }
@@ -120,9 +118,7 @@ struct ProtobufNestTrait<T> {
       primitiveChecker<T, uint64_t>().second;
   constexpr static VariantChecker checker =
       primitiveChecker<T, uint64_t>().first;
-  constexpr static std::function<bool(T &, T)> getConstructor() {
-    return &assign<T>;
-  }
+  constexpr static bool construct(T &dest, T src) { return assign<T>(dest, src); }
   static bool variant_capture(llcaproto::SingleArgVariant *capture, T n) {
     return capture_into<T>(capture, n);
   }
@@ -147,14 +143,28 @@ bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
 
 template <> struct ProtobufNestTrait<std::string> {
   using ExtractorType = VariantExtractor<const llcaproto::StringWrap &>;
+  // member function pointer to the protobuf-generated member function that GETs
+  // the a reference to the protoBuf type representing the wrapper around the
+  // custom type - here std::string is wrapped in a StringWrap
   constexpr static ExtractorType extractor = &llcaproto::SingleArgVariant::str;
+  // same, just with checking the presence of the wrapper type
   constexpr static VariantChecker checker =
       &llcaproto::SingleArgVariant::has_str;
-  constexpr static std::function<bool(std::string &,
-                                      const llcaproto::StringWrap &)>
-  getConstructor() {
-    return &assign_stringwrap;
+
+  // --- used in argument hijacking
+  // returns a function wrapper that
+  // takes in a MUTABLE reference to a target string
+  // - if this function returns true, the first argument is a valid
+  //   value of the type (meant to be constructed from the wrapper - second
+  //   argument)
+  static bool construct(std::string &dest, const llcaproto::StringWrap &src) {
+    return assign_stringwrap(dest, src);
   }
+
+  // --- used in argument capture
+  // receives an allocated SignleArgVariant and captures the std::string
+  // into it
+  // returns true on success
   static bool variant_capture(llcaproto::SingleArgVariant *capture,
                               const std::string &str) {
     return capture_stringwrap(capture, str, capture->GetArena());
