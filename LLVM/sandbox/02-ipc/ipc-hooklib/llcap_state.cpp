@@ -3,17 +3,10 @@
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
-#include <assert.h>
 #include <fcntl.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <memory>
 #include <semaphore.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 #define PUSH_FALURE 230

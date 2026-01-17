@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <format>
 #include <google/protobuf/arena.h>
 #include <iostream>
 #include <ostream>
@@ -74,8 +75,7 @@ static bool connect_to_server(const char *path) {
 template <size_t Sz>
 static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
   if (send(s_server_socket, message.data(), message.size(), 0) == -1) {
-    std::cerr << "Failed to send " << desc << std::endl;
-    perror("");
+    perror(std::format("Failed to send {}\n", desc).c_str());
     close(s_server_socket);
     return false;
   }
@@ -85,14 +85,14 @@ static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
 static bool do_srv_recv(void *target, size_t size, const char *desc) {
   ssize_t rcvd = recv(s_server_socket, target, size, 0);
   if (rcvd <= 0) {
-    std::cerr << "Failed to recv " << desc << ", rcvd: " << rcvd << std::endl;
-    perror("");
+    perror(
+        std::format("Failed to recv {0} - received {1}\n", desc, rcvd).c_str());
     close(s_server_socket);
     return false;
   } else if (static_cast<size_t>(rcvd) < size) {
-    std::cerr << "Failed to recv size at " << desc << ", got: " << rcvd
-              << " expected " << size << '\n';
-    perror("");
+    perror(std::format("Failed to recv size at {0} - got {1} - expected {2}\n",
+                       desc, rcvd, size)
+               .c_str());
     close(s_server_socket);
     return false;
   }
@@ -112,8 +112,7 @@ template <size_t OutSz, size_t InSz, size_t... InSzS>
 static void copy_into_impl(std::array<char, OutSz> &target, size_t shift,
                            const std::array<char, InSz> &in,
                            const std::array<char, InSzS> &...others) {
-  namespace rang = std::ranges;
-  rang::copy(in, target.begin() + shift);
+  copy_into_impl(target, shift, in);
   copy_into_impl(target, shift + in.size(), others...);
 }
 
@@ -392,7 +391,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // (test coordinator)
 
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
-    std::array<int, 2> sockets { 0 };
+    std::array<int, 2> sockets{0};
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets.data()) == -1) {
       perror("socketpair");
@@ -563,7 +562,7 @@ template <class T> constexpr static std::string_view type_name() {
   using std::string_view;
 #ifdef __clang__
   string_view p = __PRETTY_FUNCTION__;
-  return { p.data() + 34, p.size() - 34 - 1 };
+  return {p.data() + 34, p.size() - 34 - 1};
 #elif defined(__GNUC__)
   string_view p = __PRETTY_FUNCTION__;
 #if __cplusplus < 201402

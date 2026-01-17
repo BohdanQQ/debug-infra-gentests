@@ -17,9 +17,10 @@ extern "C" {
 // they are "large enough" to never be an index and are used in
 // a hacky way to inform the test coordinator that the test has reached
 // the epilogue function
-#define HOOKLIB_TESTPASS_VAL 0xFFFFFFFFFAAFF00F // no exception, before ret
-#define HOOKLIB_TESTEXC_VAL                                                    \
-  0xFFFFFFFFFAAEE00E // indicates exception handling happening
+constexpr uint64_t HOOKLIB_TESTPASS_VAL =
+    0xFFFFFFFFFAAFF00F; // no exception, before ret
+constexpr uint64_t HOOKLIB_TESTEXC_VAL =
+    0xFFFFFFFFFAAEE00E; // indicates exception handling happening
 
 #ifdef MANUAL_INIT_DEINIT
 #define HOOKLIB_CTOR_ATTR
@@ -73,11 +74,12 @@ void register_call(void);
 void disable_hijacking(void);
 
 // indicate test passed to the test monitor (parent)
-// `exception` argument indicates whether or not exception handling was taking place
+// `exception` argument indicates whether or not exception handling was taking
+// place
 bool send_test_pass_to_monitor(bool exception);
 // copy specified nr of bytes of the argument packet to the target address
 bool consume_bytes_from_packet(size_t bytes, void *target);
-const llcaproto::SingleArgVariant* get_next_arg();
+const llcaproto::SingleArgVariant *get_next_arg();
 
 // intializes the argument packet, use `consume_bytes_from_packet` to consume
 // data from it
