@@ -11,7 +11,7 @@ extern "C" {
 // reads data of the specified size from a oneshot "channel" into the target
 // address
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
-                      const char *shm_name, void *target, size_t size);
+                      const char *shm_name, const char *shm_size_name, bool (handler)(const void* source, uint32_t size), uint32_t max_size);
 
 
 #ifdef __cplusplus

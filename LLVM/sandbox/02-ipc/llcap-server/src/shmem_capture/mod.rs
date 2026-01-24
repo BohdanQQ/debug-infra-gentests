@@ -3,7 +3,7 @@ pub mod call_tracing;
 pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
-use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
+use hooklib_commons::{META_MEM_NAME, META_SEM_ACK, META_SEM_DATA, META_MEM_SIZE_NAME, ShmMeta};
 use std::ffi::CStr;
 use std::slice;
 use std::time::Duration;
@@ -440,9 +440,16 @@ fn init_shmem(prefix: &str, buff_count: u32, buff_len: u32) -> Result<ShmemHandl
 fn cleanup_shared_mem(prefix: &str) -> Result<()> {
   let lg = Log::get("cleanup_shared_mem");
   let metadata_shm_name = String::from_utf8(META_MEM_NAME.to_vec())?;
+  let metadata_shm_size_name = String::from_utf8(META_MEM_SIZE_NAME.to_vec())?;
   let buffs_shm_name: String = get_shmem_name(prefix); // keep type annotation for safety
   // SAFETY: line above
-  for name in unsafe { [to_cstr(&metadata_shm_name), to_cstr(&buffs_shm_name)] } {
+  for name in unsafe {
+    [
+      to_cstr(&metadata_shm_name),
+      to_cstr(&buffs_shm_name),
+      to_cstr(&metadata_shm_size_name),
+    ]
+  } {
     lg.info(format!("Cleanup {name:?}"));
     if let Err(e) = try_shm_unlink_fd(name) {
       lg.info(format!("Cleanup error: {name:?}: {e}"));
@@ -475,7 +482,9 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
+      thread_count: 0,
     },
+    None,
   )
 }
 
@@ -493,7 +502,9 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       test_count: 0,
       target_call_number: 0,
       test_timeout_seconds: 0,
+      thread_count: 0,
     },
+    None,
   )
 }
 
@@ -509,6 +520,7 @@ pub fn send_test_metadata(
   infra: InfraParams,
   fn_uid: NumFunUid,
   params: TestParams,
+  thread_counters: Option<&Vec<u64>>,
 ) -> Result<()> {
   send_metadata(
     chnl,
@@ -523,18 +535,25 @@ pub fn send_test_metadata(
       test_count: params.test_count,
       target_call_number: params.target_call_number,
       test_timeout_seconds: params.timeout.as_secs() as u16,
+      thread_count: thread_counters.map_or(0u32, |v| v.len() as u32),
     },
+    thread_counters,
   )
 }
 
 // sends the communication/testing parameters to the hooklib
-fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
+fn send_metadata(
+  meta_pub: &mut MetadataPublisher,
+  target_descriptor: ShmMeta,
+  thread_counters: Option<&Vec<u64>>,
+) -> Result<()> {
   Log::get("send_metadata").info("Waiting for a cooperating program");
-  meta_pub.publish(target_descriptor)
+  meta_pub.publish(target_descriptor, thread_counters)
 }
 
 // do not derive clone/copy or define functions with similar semantics
 pub struct MetadataPublisher {
+  size_shm: ShmemHandle,
   shm: ShmemHandle,
   data_rdy_sem: Semaphore,
   data_ack_sem: Semaphore,
@@ -545,35 +564,70 @@ impl MetadataPublisher {
   // a "data_rdy" semaphore that signals that the metadata is ready to be read
   // a "data_ack" semaphore that indicates that the data has been read and can be rewritten/discarded
 
-  pub fn new(mem_path: &CStr, data_sem_path: &str, ack_sem_path: &str) -> Result<Self> {
+  pub fn new(
+    mem_path: &CStr,
+    size_mem_path: &CStr,
+    data_sem_path: &str,
+    ack_sem_path: &str,
+    thread_ids: Option<&Vec<u64>>,
+  ) -> Result<Self> {
     // initialize ready semaphore to zero as no data is ready
     let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
     // !! ack semaphore is initialized to ONE - this will be waited on in the first call of
     // Self::publish
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
-    let shm = ShmemHandle::try_mmap(mem_path, std::mem::size_of::<ShmemHandle>() as u32)?;
+
+    // allocate sizeof(shmemHandle) + (size of the thread_ids data)
+    let to_alloc = std::mem::size_of::<ShmMeta>() as u32
+      + thread_ids.map(|v| (v.len() * 8) as u32).unwrap_or(0u32);
+
+    // share the size-to-be allocated
+    let mut size_shm = ShmemHandle::try_mmap(size_mem_path, 4)?;
+    {
+      let mem = size_shm.borrow_ptr_mut()?;
+      unsafe { (*mem as *mut u32).write_unaligned(to_alloc) };
+    }
+
+    let shm = ShmemHandle::try_mmap(mem_path, to_alloc)?;
     Ok(Self {
+      size_shm,
       shm,
       data_rdy_sem: data,
       data_ack_sem: ack,
     })
   }
 
-  pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
+  pub fn publish(&mut self, meta: ShmMeta, thread_ids: Option<&Vec<u64>>) -> Result<()> {
     self.data_ack_sem.try_wait()?;
 
     {
+      Log::get("MetadataPublisher::publish").trace(format!(
+        "Thread Count {} vs real {}",
+        meta.thread_count,
+        thread_ids.map_or(0, Vec::len)
+      ));
+
       let mem = self.shm.borrow_ptr_mut()?;
+      let mut tmp_mem = *mem;
       unsafe {
+        // SAFETY: allocation of self.shm (mainly the size)
         // unaligned write just to be sure
-        (*mem as *mut ShmMeta).write_unaligned(meta);
+        (tmp_mem as *mut ShmMeta).write_unaligned(meta);
+        tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<ShmemHandle>() as isize);
+
+        if let Some(ids) = thread_ids {
+          for v in ids {
+            (tmp_mem as *mut u64).write_unaligned(*v);
+            tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<u64>() as isize);
+          }
+        }
       }
     }
-
     self.data_rdy_sem.try_post()
   }
 
   pub fn deinit(self) -> Result<()> {
+    self.size_shm.try_unmap()?;
     self.shm.try_unmap()?;
     self.data_ack_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     self.data_rdy_sem.try_destroy().map_err(|e| anyhow!(e.1))?;

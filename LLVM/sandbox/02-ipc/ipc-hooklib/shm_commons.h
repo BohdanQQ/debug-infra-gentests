@@ -34,6 +34,8 @@ typedef struct {
   // the number passed here should be "intended call 0-based index" + 2!
   unsigned int target_call_number;
   unsigned short test_timeout_seconds;
+  // number of items in the thread-counting list
+  unsigned int thread_count;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 
@@ -58,6 +60,7 @@ static const unsigned short TAG_FATAL   = 18; // fatal test failure, indicates a
 static const char *const META_SEM_DATA = "/llcap-meta-sem-data";
 static const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
 static const char *const META_MEM_NAME = "/llcap-meta-shmem";
+static const char *const META_MEM_SIZE_NAME = "/llcap-meta-shmem-size";
 static const char *const TEST_SERVER_SOCKET_NAME = "/tmp/llcap-test-server";
 
 #endif // LLCAP_SHM_COMMONS

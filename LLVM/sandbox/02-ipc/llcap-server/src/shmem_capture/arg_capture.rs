@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use crate::{
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr},
   sizetype_handlers::{CustomTypeReader, ReadProgress, SizeTypeReader},
-  stages::arg_capture::ArgPacketDumper,
+  stages::arg_capture::{ArgPacketDumper, dump_thread_counts},
 };
 use anyhow::{Result, anyhow, ensure};
 
@@ -35,15 +37,20 @@ enum PartialCaptureState {
   GotModuleId {
     module_id: IntegralModId,
   },
+  GotFnUId {
+    id: NumFunUid,
+  },
   // parses each argument according to the
   // index (via SizeTypeReaders)
   CapturingArgs {
     id: NumFunUid,
+    thread_id: u64,
     arg_idx: usize,
     buff: Vec<u8>,
   },
   Done {
     id: NumFunUid,
+    thread_id: u64,
     // contains the argument packet
     buff: Vec<u8>,
   },
@@ -74,7 +81,7 @@ impl PartialCaptureState {
   ) -> Result<Self> {
     let lg = Log::get("progress::progress_read_fn_id");
     lg.trace("Reading fnid");
-    // read 4 bytes
+    // size defined by the protocol
     let fn_id: u32 = raw_buff.unaligned_shift_num_read()?;
     // note: keep the type annotations to warn if implementing types change
     let fn_id: IntegralFnId = IntegralFnId::from(fn_id);
@@ -87,8 +94,18 @@ impl PartialCaptureState {
       *fn_id
     );
     lg.trace(format!("Fnc Id: 0x{:02X}", *fn_id));
+    Ok(Self::GotFnUId { id })
+  }
+
+  fn progress_read_thread_id(raw_buff: &mut ReadOnlyBufferPtr, id: NumFunUid) -> Result<Self> {
+    let lg = Log::get("progress::progress_read_thread_id");
+    lg.trace("Reading thread ID");
+    // size defined by the protocol
+    let thread_id: u64 = raw_buff.unaligned_shift_num_read()?;
+    lg.trace(format!("Thread Id: {thread_id}"));
     Ok(Self::CapturingArgs {
       id,
+      thread_id,
       arg_idx: 0,
       buff: Vec::new(),
     })
@@ -101,6 +118,7 @@ impl PartialCaptureState {
     mods: &ExtModuleMap,
     readers: &mut SizeTypeReaders,
     id: NumFunUid,
+    thread_id: u64,
     arg_idx: usize,
     mut buff: Vec<u8>,
   ) -> Result<Self> {
@@ -115,6 +133,7 @@ impl PartialCaptureState {
         lg.trace(format!("Argument idx: {i} empty"));
         return Ok(Self::CapturingArgs {
           id,
+          thread_id,
           arg_idx: i,
           buff,
         });
@@ -151,6 +170,7 @@ impl PartialCaptureState {
           // we're not continuing the loop, buffer is empty
           return Ok(Self::CapturingArgs {
             id,
+            thread_id,
             arg_idx: i,
             buff,
           });
@@ -169,6 +189,7 @@ impl PartialCaptureState {
           lg.crit("empty buffer check is missing, this is a soft-error");
           return Ok(Self::CapturingArgs {
             id,
+            thread_id,
             arg_idx: i,
             buff,
           });
@@ -179,7 +200,11 @@ impl PartialCaptureState {
       lg.trace(format!("Resetting reader {i}"));
       ensure!(reader.read_reset(), "Sanity check (reader reset) failed");
     }
-    Ok(Self::Done { id, buff })
+    Ok(Self::Done {
+      id,
+      thread_id,
+      buff,
+    })
   }
 
   /// tries to parse an argument packet using the data from raw_buff
@@ -193,13 +218,25 @@ impl PartialCaptureState {
     match self {
       Self::Empty => Self::progress_read_mod_id(raw_buff, mods),
       Self::GotModuleId { module_id } => Self::progress_read_fn_id(raw_buff, mods, module_id),
-      Self::CapturingArgs { id, arg_idx, buff } => {
-        Self::progress_read_args(raw_buff, mods, readers, id, arg_idx, buff)
-      }
-      Self::Done { id, buff } => {
+      Self::GotFnUId { id } => Self::progress_read_thread_id(raw_buff, id),
+      Self::CapturingArgs {
+        id,
+        thread_id,
+        arg_idx,
+        buff,
+      } => Self::progress_read_args(raw_buff, mods, readers, id, thread_id, arg_idx, buff),
+      Self::Done {
+        id,
+        thread_id,
+        buff,
+      } => {
         let lg = Log::get("progress::Done");
         lg.warn("Noop in arg capture progress");
-        Ok(Self::Done { id, buff })
+        Ok(Self::Done {
+          id,
+          thread_id,
+          buff,
+        })
       }
     }
   }
@@ -226,20 +263,33 @@ pub fn perform_arg_capture(
   modules: &ExtModuleMap,
   capture_target: &mut ArgPacketDumper,
 ) -> Result<()> {
+  let thread_dump_path = capture_target.dump_root();
   let capture = ArgCapture {
     readers: get_sizetype_readers(),
+    thread_logic_id: 0, // TODO: make these 3 defaulted...
+    thread_logical_counts: Vec::new(),
+    thread_logical_ids: HashMap::new(),
     capture_target,
   };
 
-  capture
+  let capture = capture
     .run(infra, modules)
     .map_err(|e| anyhow!("arg_capture: {e}"))?;
+
+  dump_thread_counts(&thread_dump_path, &capture.thread_logical_counts)?;
+
   Ok(())
 }
 
 struct ArgCapture<'a> {
   readers: SizeTypeReaders,
   capture_target: &'a mut ArgPacketDumper,
+  // local auto-increment id
+  thread_logic_id: u64,
+  // local map TID -> logical ID (0-based)
+  thread_logical_ids: HashMap<u64, u64>,
+  // thread logical ID -> call count
+  pub thread_logical_counts: Vec<u64>,
 }
 
 impl CaptureLoopState for ArgCaptureState {
@@ -277,12 +327,27 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
         .progress(buff, modules, &mut self.readers)?;
 
       state.partial_state = match partial_state {
-        PartialCaptureState::Done { id, mut buff } => {
+        PartialCaptureState::Done {
+          id,
+          thread_id,
+          mut buff,
+        } => {
           // save the received packet
           if let Some(dumper) = self.capture_target.get_packet_dumper(id) {
             dumper.dump(&mut buff)?;
           }
           Log::get("argCap update_from_buffer").trace(format!("{buff:02X?}"));
+          // register the thread
+          let logical_id = self.thread_logical_ids.entry(thread_id).or_insert_with(|| {
+            let val = self.thread_logic_id;
+            self.thread_logic_id += 1;
+            self.thread_logical_counts.push(0);
+            val
+          });
+
+          // register the call in the thread
+          self.thread_logical_counts[*logical_id as usize] += 1;
+
           // restart from an empty state
           PartialCaptureState::Empty
         }

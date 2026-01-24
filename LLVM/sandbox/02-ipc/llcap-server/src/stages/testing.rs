@@ -1,5 +1,12 @@
 use std::{
-  fmt::Debug, fs::{self, File}, mem, ops::DerefMut, path::PathBuf, process::Stdio, sync::{Arc, Mutex, atomic::AtomicBool}, time::Duration
+  fmt::Debug,
+  fs::{self, File},
+  mem,
+  ops::DerefMut,
+  path::PathBuf,
+  process::Stdio,
+  sync::{Arc, Mutex, atomic::AtomicBool},
+  time::Duration,
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
@@ -301,7 +308,8 @@ async fn test_coordinator_case_handler(
 ) -> Result<()> {
   // initialize state, packet supply and the stream for reading and writing to the client on the other side
   let mut state = ClientState::Init;
-  let get_logger =  |state: &ClientState| { Log::get(&format!("test_coordinator_case_handler({pid})@{state:?}")) };  
+  let get_logger =
+    |state: &ClientState| Log::get(&format!("test_coordinator_case_handler({pid})@{state:?}"));
   let mut lg = get_logger(&state);
   let mut packets = PacketReader::new(&packet_dir, &modules, mem_limit)?;
   let (read, mut write) = stream.into_split();
@@ -311,7 +319,7 @@ async fn test_coordinator_case_handler(
     // preallocate 16bytes for client messages
     let mut data = [0u8; CLI_MSG_SIZE];
     // polling with timeout to check for client status updates
-    // note: this matcher "passes" only if data is received from the socket 
+    // note: this matcher "passes" only if data is received from the socket
     match timeout(Duration::from_millis(100), buff_stream.read(&mut data)).await {
       Ok(Ok(0)) => {
         bail!("Client closed connection - ending, state: {:?}", state);
@@ -464,6 +472,7 @@ pub struct MultithreadTestJobParams {
   pub test_case_timeout: Duration,
   pub job_timeout: Option<Duration>,
   pub command: Arc<Vec<String>>,
+  pub thread_counters: Vec<u64>,
 }
 
 pub enum AnyTestJobParam {
@@ -493,6 +502,7 @@ where
   /// on the llcap-server's side
   fn kill_children(&self) -> bool;
   fn into_any(self) -> AnyTestJobParam;
+  fn thread_counts(&self) -> Option<&Vec<u64>>;
 }
 
 impl TestGenerator for ForkingTestJobParams {
@@ -524,9 +534,13 @@ impl TestGenerator for ForkingTestJobParams {
   ) -> JoinHandle<Result<(), TestJobFailure>> {
     tokio::spawn(forking_test_job(svr, infra_params, self, output_gen))
   }
-  
+
   fn kill_children(&self) -> bool {
-        true
+    true
+  }
+
+  fn thread_counts(&self) -> Option<&Vec<u64>> {
+    None
   }
 }
 
@@ -558,9 +572,13 @@ impl TestGenerator for MultithreadTestJobParams {
   ) -> JoinHandle<Result<(), TestJobFailure>> {
     tokio::spawn(multithread_test_job(svr, infra_params, self, output_gen))
   }
-  
+
   fn kill_children(&self) -> bool {
-        false
+    false
+  }
+
+  fn thread_counts(&self) -> Option<&Vec<u64>> {
+    Some(&self.thread_counters)
   }
 }
 
@@ -598,6 +616,7 @@ async fn singular_test_job(
         module_id: m,
       },
       job_params.test_params(call_idx),
+      job_params.thread_counts(),
     )
     .map_err(mk_error)?;
   }

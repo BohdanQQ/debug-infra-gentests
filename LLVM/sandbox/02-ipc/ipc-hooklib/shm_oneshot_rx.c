@@ -11,7 +11,7 @@
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
-                      const char *shm_name, void *target, size_t size) {
+                      const char *shm_name, const char *shm_size_name, bool (handler)(const void* source, uint32_t size), uint32_t max_size) {
   // initialize channel semaphores
   // we have 2 - the "data available" semaphore and an "ack" semaphore (signals
   // we read the data and are ready to proceed)
@@ -30,35 +30,54 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
     return false;
   }
 
+  bool rv = false;
+  // wait for data to be ready
+  if (sem_wait(semaphore) == -1) {
+    printf("Oneshot readout from shared memory failed on semaphore wait %s\n",
+      data_sem_name);
+    goto close_sem;
+  }
+    
   // map memory synchronized by the semaphores
   int fd = -1;
   void *source;
-  if (mmap_shmem(shm_name, &source, &fd, size, false) == -1) {
-    sem_close(ack);
-    sem_close(semaphore);
-    return false;
+
+  uint32_t sz_to_alloc = 0;
+  if (mmap_shmem(shm_size_name, &source, &fd, sizeof(sz_to_alloc), false) == -1) {
+      printf("Oneshot readout from shared memory failed on size read %s\n",
+      shm_size_name);
+      goto close_sem;
+  }
+  memcpy(&sz_to_alloc, source, sizeof(sz_to_alloc));
+  for (int i = 0; i < 4; ++i) {
+    printf("%u\n", (int)*(((unsigned char*)source) + i));
+  }
+  unmap_shmem(source, fd, shm_size_name, sizeof(sz_to_alloc), UNMAP_SHMEM_FLAG_TRY_ALL);
+  
+  if (sz_to_alloc > max_size) {
+    printf("Size to allocate is suspicious. Aborting.\n(size: %u, max: %u)\n", sz_to_alloc, max_size);
+    goto close_sem;
+  }
+  
+  if (mmap_shmem(shm_name, &source, &fd, sz_to_alloc, false) == -1) {
+    printf("Oneshot readout from shared memory failed on data readout %s %u\n",
+           shm_name, sz_to_alloc);
+    goto close_sem;
   }
 
-  // wait for data to be ready
-  bool rv = false;
-  if (sem_wait(semaphore) == -1) {
-    printf("Oneshot readout from shared memory failed on semaphore wait %s\n",
-           data_sem_name);
-    perror("");
-    goto end;
+  rv = handler(source, sz_to_alloc);
+  if(!rv) {
+    printf("Memhandler failed\n");
   }
-  // copy the data to the target
-  memcpy(target, source, size);
   // inform we're done, cleanup
   if (sem_post(ack) != 0) {
     printf("Oneshot failed to ack on sem %s\n", ack_sem_name);
-    perror("");
     goto end;
   }
-  rv = true;
 
 end:
-  unmap_shmem(source, fd, shm_name, size, UNMAP_SHMEM_FLAG_TRY_ALL);
+  unmap_shmem(source, fd, shm_name, sz_to_alloc, UNMAP_SHMEM_FLAG_TRY_ALL);
+close_sem:
   sem_close(ack);
   sem_close(semaphore);
   return rv;

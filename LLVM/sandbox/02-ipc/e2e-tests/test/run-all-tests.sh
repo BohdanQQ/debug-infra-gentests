@@ -99,12 +99,12 @@ run-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
 
 echo "Forcing small buffers and 2-buffer recycling"
 
-# 8 is the minimum buffer size
+# 16 is the minimum buffer size
 
-run-tests-with-buffers 8 2
+run-tests-with-buffers 16 2
 
 echo "Forcing small buffers and buffer recycling on a single buffer"
 
-run-tests-with-buffers 8 1
+run-tests-with-buffers 16 1
 
 echo "All done"

@@ -26,6 +26,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <thread>
 #include <type_traits>
 #include <unistd.h>
 #include <utility>
@@ -422,7 +423,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets.data()) == -1) {
       perror("socketpair");
-      exit(HOOKLIB_EC_PAIR);
+      std::exit(HOOKLIB_EC_PAIR);
     }
     int test_process_socket = sockets[1];
     int coordinator_socket = sockets[0];
@@ -482,6 +483,9 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
     // itself
     push_data(&module_id, sizeof(module_id));
     push_data(&fn_id, sizeof(fn_id));
+    auto tid = std::this_thread::get_id();
+    static_assert(sizeof(tid) == 8, "Unexpected Thread ID size");
+    push_data(&tid, sizeof(tid));
     s_capptured_args =
         google::protobuf::Arena::Create<::llcaproto::Arguments>(&s_arena);
     // the rest of this function concerns only the testing mode

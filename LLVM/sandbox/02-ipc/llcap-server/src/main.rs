@@ -34,6 +34,7 @@ use crate::{
   modmap::NumFunUid,
   shmem_capture::{TracingInfra, send_call_tracing_metadata},
   stages::{
+    arg_capture::read_thread_counts,
     common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
     testing::{
       ForkingTestJobParams, LogResult, MultithreadTestJobParams, TestGenerator, TestJobFailure,
@@ -44,12 +45,18 @@ use crate::{
 
 // shorthands for the creation of the MetadataPublisher
 
-fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPublisher>>> {
+fn create_meta_svr(
+  params: &CommonStageParams,
+  thread_counters: Option<&Vec<u64>>,
+) -> Result<Arc<Mutex<MetadataPublisher>>> {
+  let (data_name, size_name) = params.shmem_path_cstr()?;
   Ok(Arc::new(Mutex::new(
     MetadataPublisher::new(
-      params.shmem_path_cstr()?,
+      data_name,
+      size_name,
       &params.data_semaphore_name,
       &params.ack_semaphore_name,
+      thread_counters,
     )
     .map_err(|e| anyhow!("{e}\ncleanup required..."))?,
   )))
@@ -103,7 +110,7 @@ async fn main() -> Result<()> {
         let infra_params = common_params.infra;
         let (mut tracing_infra, finalizer_info) =
           TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-        let metadata_svr = create_meta_svr(&common_params)?;
+        let metadata_svr = create_meta_svr(&common_params, None)?;
 
         let result = drive_instrumented_application(
           cmd_from_args(&command)?,
@@ -169,7 +176,7 @@ async fn main() -> Result<()> {
       let infra_params = common_params.infra;
       let (mut tracing_infra, finalizer_info) =
         TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-      let metadata_svr = create_meta_svr(&common_params)?;
+      let metadata_svr = create_meta_svr(&common_params, None)?;
 
       // for comments, see the match arm for the TraceCalls subcommand
       let result = drive_instrumented_application(
@@ -220,7 +227,8 @@ async fn main() -> Result<()> {
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
-
+      let thread_counts = read_thread_counts(&capture_dir)
+        .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?;
       if let Some(inspection_spec) = inspect_packet {
         return crate::stages::testing::inspect_packet(
           &inspection_spec,
@@ -251,7 +259,7 @@ async fn main() -> Result<()> {
       }
 
       let mut futs = vec![];
-      let metadata_svr = create_meta_svr(&common_params)?;
+      let metadata_svr = create_meta_svr(&common_params, Some(&thread_counts))?;
       let mut errors = vec![];
       let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
       let test_case_timeout = Duration::from_secs(timeout as u64);
@@ -290,6 +298,7 @@ async fn main() -> Result<()> {
                 packet_count: test_count,
                 job_timeout: global_timeout,
                 command: command.clone(),
+                thread_counters: thread_counts.clone(),
               }
               .into_job(
                 metadata_svr.clone(),

@@ -3,6 +3,9 @@
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
 #include <memory>
@@ -12,6 +15,8 @@
 #define PUSH_FALURE 230
 
 static ShmMeta s_buff_info;
+static std::vector<uint64_t> s_thread_counts;
+
 // should be initialized and updated such that
 // - is counted down on each target fn call entry
 // - never undeflows (underflow attempts are expected)
@@ -22,9 +27,26 @@ static unsigned int s_call_countdown;
 
 static WriteChannel s_channel;
 
-static bool get_buffer_info(ShmMeta *target) {
-  return oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME, target,
-                          sizeof(ShmMeta));
+static bool populate_static_metadata(const void* source, uint32_t size) {
+  if (size < sizeof(s_buff_info)) {
+    printf("Unexpected size %u, expected %lu\n", size, sizeof(s_buff_info));
+    return false;
+  }
+  memcpy(&s_buff_info, source, sizeof(s_buff_info));
+  uint32_t expected = s_buff_info.thread_count * sizeof(uint64_t);
+  // note: if expected is zero, nothing will be read
+  // this happens in the original forking mode (metadata publisher tech debt...)
+  if (expected != 0 && sizeof(s_buff_info) + expected != size) {
+    printf("Unexpected size %u, expected %u + %lu\n", size, expected, sizeof(s_buff_info));
+    return false;
+  }
+  s_thread_counts.resize(s_buff_info.thread_count);
+  memcpy(s_thread_counts.data(), static_cast<const char*>(source) + sizeof(s_buff_info), expected);
+  return true;
+}
+
+static bool get_buffer_info() {
+  return oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME, META_MEM_SIZE_NAME, populate_static_metadata, 1024U * 1024U * 1024U * 2U);
 }
 
 // sets up the semaphores and information required for buffer management
@@ -32,11 +54,12 @@ static bool get_buffer_info(ShmMeta *target) {
 static int setup_infra(void) {
   int rv = 1;
 
-  if (!get_buffer_info(&s_buff_info)) {
+  if (!get_buffer_info()) {
     printf("Could not obtain buffer info\n");
     return rv;
   }
 
+  // TODO ( s_thread_counts)
   s_call_countdown = s_buff_info.target_call_number + 1;
 
   ChannelInfo info;

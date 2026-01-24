@@ -314,9 +314,9 @@ int channel_write(WriteChannel *self, const void *source, uint32_t len) {
   uint32_t written = 0;
   while (len > 0) {
     uint32_t free_space = get_buff_data_free_space(self);
-    // we must ensure that 4-byte values are readable in 1 read (from 1 buffer)
-    //  - limitation of how llcap-server reads function and module IDs
-    if (free_space < 4) {
+    // we must ensure that 8-byte values are readable in 1 read (from 1 buffer)
+    //  - limitation of how llcap-server reads function, module and thread IDs
+    if (free_space < 8) {
       if (!move_to_next_buff(self)) {
         printf("Failed to obtain a free buffer!\n");
         return -1;

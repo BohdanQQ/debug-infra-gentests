@@ -166,6 +166,7 @@ pub struct CommonStageParams {
   pub data_semaphore_name: String,
   pub ack_semaphore_name: String,
   meta_mem_name_null_term: Vec<u8>,
+  meta_mem_size_name_null_term: Vec<u8>,
 }
 
 impl CommonStageParams {
@@ -174,15 +175,16 @@ impl CommonStageParams {
     let sem_str = null_terminated_to_string(META_SEM_DATA)?;
     let ack_str = null_terminated_to_string(META_SEM_ACK)?;
     ensure!(
-      buff_size % 4 == 0,
-      "Buffer size must be a multiple of 4 due to alignment requirements"
+      buff_size % 8 == 0,
+      "Buffer size must be a multiple of 8 due to alignment requirements (thread ID)"
     );
-    const MIN_BUFF_SIZE: u32 = 8;
+    const MIN_BUFF_SIZE: u32 = 16;
     // this is a hooklib limit and must be kept in sync
     // use e2e tests to check for validity of this value (run tests with buffer size equal to MIN_BUFF_SIZE)
     ensure!(
-      buff_size >= MIN_BUFF_SIZE,
-      "Buffer size must be larger (at least {MIN_BUFF_SIZE})"
+      buff_size / buff_count >= MIN_BUFF_SIZE,
+      "Buffer size must be larger (at least {})",
+      MIN_BUFF_SIZE * buff_count
     );
     Ok(CommonStageParams {
       modules: Some(modules),
@@ -193,11 +195,16 @@ impl CommonStageParams {
       data_semaphore_name: sem_str,
       ack_semaphore_name: ack_str,
       meta_mem_name_null_term: META_MEM_NAME.to_vec(),
+      meta_mem_size_name_null_term: META_MEM_SIZE_NAME.to_vec(),
     })
   }
 
-  pub fn shmem_path_cstr(&self) -> Result<&CStr> {
-    std::ffi::CStr::from_bytes_with_nul(&self.meta_mem_name_null_term).map_err(|e| anyhow!(e))
+  pub fn shmem_path_cstr(&self) -> Result<(&CStr, &CStr)> {
+    Ok((
+      std::ffi::CStr::from_bytes_with_nul(&self.meta_mem_name_null_term).map_err(|e| anyhow!(e))?,
+      std::ffi::CStr::from_bytes_with_nul(&self.meta_mem_size_name_null_term)
+        .map_err(|e| anyhow!(e))?,
+    ))
   }
 
   pub fn extract_module_maps(&mut self) -> Result<ExtModuleMap> {
