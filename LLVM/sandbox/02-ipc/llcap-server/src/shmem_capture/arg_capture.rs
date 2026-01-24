@@ -5,7 +5,8 @@ use crate::{
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{BorrowedReadBuffer, CaptureLoop, CaptureLoopState, ReadOnlyBufferPtr},
   sizetype_handlers::{CustomTypeReader, ReadProgress, SizeTypeReader},
-  stages::arg_capture::{ArgPacketDumper, dump_thread_counts},
+  stages::arg_capture::ArgPacketDumper,
+  stages::common::dump_thread_counts,
 };
 use anyhow::{Result, anyhow, ensure};
 

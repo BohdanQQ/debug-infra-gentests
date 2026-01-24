@@ -1,8 +1,9 @@
 use std::{
   ffi::CStr,
+  io::{Read, Write},
   ops::DerefMut,
   os::unix::process::ExitStatusExt,
-  path::PathBuf,
+  path::{Path, PathBuf},
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -212,4 +213,48 @@ impl CommonStageParams {
     std::mem::swap(&mut self.modules, &mut mods);
     mods.ok_or(anyhow!("Module maps already extracted"))
   }
+}
+
+pub fn get_thread_counts_path(root: &Path) -> PathBuf {
+  root.join("thread_call_counts.txt")
+}
+
+pub fn dump_thread_counts(root: &Path, counts: &[u64]) -> Result<usize> {
+  let line = counts
+    .iter()
+    .map(|v| format!("{v}"))
+    .fold("".to_owned(), |acc, v| format!("{acc} {v}"))
+    + "\n";
+  let file_path = get_thread_counts_path(root);
+  Log::get("dump_thread_counts").trace(format!("dumping thread counts {file_path:?}"));
+  let mut file = std::fs::File::create(file_path).map_err(|e| anyhow!(e))?;
+  file.write(line.as_bytes()).map_err(|e| anyhow!(e))
+}
+
+pub fn read_thread_counts(root: &Path) -> Result<Vec<u64>> {
+  let file_path = get_thread_counts_path(root);
+  let mut line = String::new();
+
+  let lg = Log::get("read_thread_counts");
+  lg.trace(format!("parsing thread counts {file_path:?}"));
+
+  std::fs::File::open(file_path)
+    .map_err(|e| anyhow!(e))?
+    .read_to_string(&mut line)
+    .map_err(|e| anyhow!(e))?;
+
+  let newline = line.char_indices().find(|v| v.1 == '\n');
+  ensure!(newline.is_some(), "newline not found");
+
+  let str_list = line.split_at(newline.unwrap().0).0;
+  str_list
+    .split(" ")
+    .skip(1) // see the encoding, there is a leading space on the line, we're skipping it here
+    .try_fold(Vec::new(), |mut acc, v| {
+      let val = v
+        .parse::<u64>()
+        .map_err(|e| anyhow!("Parsing tid {v}: {e}"))?;
+      acc.push(val);
+      Ok(acc)
+    })
 }

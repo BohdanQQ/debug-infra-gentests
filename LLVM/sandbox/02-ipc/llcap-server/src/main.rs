@@ -34,8 +34,9 @@ use crate::{
   modmap::NumFunUid,
   shmem_capture::{TracingInfra, send_call_tracing_metadata},
   stages::{
-    arg_capture::read_thread_counts,
-    common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
+    common::{
+      CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
+    },
     testing::{
       ForkingTestJobParams, LogResult, MultithreadTestJobParams, TestGenerator, TestJobFailure,
       TestOutputPathGen, TestStatus,
