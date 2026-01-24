@@ -26,17 +26,22 @@
 
 # TOPIC: Multithreading support
 
-* selected approach: inversion of fork mechanism
-    * split LLCAP functionality (switch)
-    * split hooklib functionality (add metadata to select fork mode at runtime)
+* ~~selected approach: inversion of fork mechanism~~
+    * ~~split LLCAP functionality (switch)~~
+    * ~~split hooklib functionality (add metadata to select fork mode at runtime)~~
+* thread-ID mapping 
+    * in `llcap-server`
+    * in `hooklib`
+* thread-safety of `hooklib` in `mt` mode
 * try each combination (thread ID needed) of args/thread
-    * craft e2e test code
+    * ~~craft e2e test code~~
     * craft e2e test cases
 * tackle killing of a detached child process
     * if parent dies and child remains, IMO llcap-server cannot reach the child process
-    * also tackle the **wrong** `exit` calls
-        * exit in a child can cause parent to hang, etc.
-        * in child, always use `std:::quick_exit`
+        * this is not handled explicitly by `llcap-server`, but by the `hooklib` (child detects parent's timeout -> exits)
+    * ~~also tackle the **wrong** `exit` calls~~
+        * ~~exit in a child can cause parent to hang, etc.~~
+        * ~~in child, always use `std:::quick_exit`~~
 
 
 # TOPIC: Type extensions
