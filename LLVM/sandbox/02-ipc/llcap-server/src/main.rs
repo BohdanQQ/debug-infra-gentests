@@ -35,7 +35,10 @@ use crate::{
   shmem_capture::{TracingInfra, send_call_tracing_metadata},
   stages::{
     common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
-    testing::{LogResult, TestJobFailure, TestJobParams, TestOutputPathGen, TestStatus, test_job},
+    testing::{
+      ForkingTestJobParams, LogResult, MultithreadTestJobParams, TestGenerator, TestJobFailure,
+      TestOutputPathGen, TestStatus,
+    },
   },
 };
 
@@ -200,6 +203,7 @@ async fn main() -> Result<()> {
       command,
       inspect_packets: inspect_packet,
       report,
+      mt_support,
     } => {
       let log_out = match report {
         None => LogStrategy::StdOut,
@@ -248,6 +252,9 @@ async fn main() -> Result<()> {
 
       let mut futs = vec![];
       let metadata_svr = create_meta_svr(&common_params)?;
+      let mut errors = vec![];
+      let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
+      let test_case_timeout = Duration::from_secs(timeout as u64);
 
       for module in modules.modules() {
         for function in modules.functions(*module).unwrap() {
@@ -268,33 +275,50 @@ async fn main() -> Result<()> {
             continue;
           }
 
-          lg.progress(format!(
-            "Run program for fn m: {} f: {}",
-            module.hex_string(),
-            function.hex_string()
-          ));
+          let fn_uid = NumFunUid {
+            function_id: *function,
+            module_id: *module,
+          };
+          lg.progress(format!("Run program for fn {fn_uid:?}"));
 
-          let test_job = tokio::spawn(test_job(
-            metadata_svr.clone(),
-            common_params.infra,
-            TestJobParams {
-              fn_uid: NumFunUid {
-                function_id: *function,
-                module_id: *module,
-              },
+          if mt_support {
+            for test_index in 0..test_count {
+              let test_job = MultithreadTestJobParams {
+                fn_uid,
+                test_index,
+                test_case_timeout,
+                packet_count: test_count,
+                job_timeout: global_timeout,
+                command: command.clone(),
+              }
+              .into_job(
+                metadata_svr.clone(),
+                common_params.infra,
+                output_gen.clone(),
+              );
+
+              if let Err(e) = test_job.await? {
+                errors.push(e);
+              }
+            }
+          } else {
+            let test_job = ForkingTestJobParams {
+              fn_uid,
               test_count,
-              test_case_timeout: Duration::from_secs(timeout as u64),
-              job_timeout: global_timeout.map(|v| Duration::from_secs(v as u64)),
+              test_case_timeout,
+              job_timeout: global_timeout,
               command: command.clone(),
-            },
-            output_gen.clone(),
-          ));
-
-          futs.push(test_job);
+            }
+            .into_job(
+              metadata_svr.clone(),
+              common_params.infra,
+              output_gen.clone(),
+            );
+            futs.push(test_job);
+          }
         }
       }
       lg.progress("Waiting for jobs to finish...");
-      let mut errors = vec![];
       for fut in futs {
         if let Err(e) = fut.await? {
           errors.push(e);
@@ -343,7 +367,14 @@ async fn report_results(
     let _ = lg.result(result).await;
   }
   for error in errors {
-    let uid = error.params.fn_uid;
+    let uid = match error.params {
+      stages::testing::AnyTestJobParam::F(forking_test_job_params) => {
+        forking_test_job_params.fn_uid
+      }
+      stages::testing::AnyTestJobParam::M(multithread_test_job_params) => {
+        multithread_test_job_params.fn_uid
+      }
+    };
     let _ = lg
       .result(&LogResult {
         uid,

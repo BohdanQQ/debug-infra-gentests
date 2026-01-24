@@ -27,6 +27,7 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <type_traits>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -45,6 +46,17 @@
 static int s_server_socket = -1;
 
 template <typename T, std::size_t S> using Arr = std::array<T, S>;
+
+template <size_t Sz>
+static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
+  if (send(s_server_socket, message.data(), message.size(), 0) == -1) {
+    perror(std::format("Failed to send {}\n", desc).c_str());
+    close(s_server_socket);
+    return false;
+  }
+  return true;
+}
+
 
 static bool connect_to_server(const char *path) {
   // https://beej.us/guide/bgipc/html/split/unixsock.html#unixsock
@@ -69,17 +81,10 @@ static bool connect_to_server(const char *path) {
     return false;
   }
 
-  return true;
-}
+  // the bitcast checks (at compile time) that pid_t fits the array
+  auto pid_bytes = std::bit_cast<std::array<char, 4>>(getpid());
 
-template <size_t Sz>
-static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
-  if (send(s_server_socket, message.data(), message.size(), 0) == -1) {
-    perror(std::format("Failed to send {}\n", desc).c_str());
-    close(s_server_socket);
-    return false;
-  }
-  return true;
+  return do_srv_send(pid_bytes, "Connect - PID");
 }
 
 static bool do_srv_recv(void *target, size_t size, const char *desc) {
@@ -321,7 +326,7 @@ static ERequestResult handle_requests(int rq_sock) {
   return ERequestResult::Continue;
 }
 
-static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
+static EMsgEnd serve_for_other_until_end(int test_requests_socket, pid_t pid,
                                          int timeout_s, int32_t *status) {
   EMsgEnd result = EMsgEnd::MSG_END_FATAL;
   time_t seconds = time(NULL);
@@ -343,7 +348,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
         case ERequestResult::Continue:
           break;
         default:
-          std::cerr << "serve_for_child_until_end: invalid ERequestResult: "
+          std::cerr << "serve_for_other_until_end: invalid ERequestResult: "
                     << std::to_underlying(req_result);
           return EMsgEnd::MSG_END_FATAL;
         }
@@ -368,7 +373,7 @@ static EMsgEnd serve_for_child_until_end(int test_requests_socket, pid_t pid,
     case ERequestResult::Continue:
       break;
     default:
-      std::cerr << "serve_for_child_until_end: invalid ending ERequestResult: "
+      std::cerr << "serve_for_other_until_end: invalid ending ERequestResult: "
                 << std::to_underlying(req_result);
       return EMsgEnd::MSG_END_FATAL;
     }
@@ -379,17 +384,39 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                             uint32_t call_idx) {
   if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
-    exit(HOOKLIB_EC_CONN);
+    std::exit(HOOKLIB_EC_CONN);
   }
 
   if (!send_start_msg(module_id, function_id, call_idx)) {
     std::cerr << "Failed send start message" << std::endl;
-    exit(HOOKLIB_EC_START);
+    std::exit(HOOKLIB_EC_START);
   }
+  
   set_fork_flag(); // setting the flag in both parent and the fork should not
                    // matter, this function never returns in the fork's parent
                    // (test coordinator)
+                   // ! for mt_compat_testing we don't actually fork
+                   // but the behavior should remain the same (call counts, ...)
 
+  if (mt_compat_testing()) {
+    void* packet_ptr = nullptr;
+    uint32_t packet_size = 0;
+    // in this mode, the test_count is the actual index of the test to request from the server
+    if (!request_packet_from_server(test_count(), &packet_ptr, &packet_size)) {
+      std::cerr << std::format("Packet request failed with idx {0}, received size {1}", test_count(), packet_size)  << std::endl;
+      std::exit(HOOKLIB_EC_RECV_PKT);
+    }
+
+
+    if(packet_ptr == nullptr || !locally_initialize_arg_packet(packet_ptr,static_cast<int>(packet_size))) {
+      std::cerr << std::format("Packet init failed with idx {0}, received size {1}, packet ptr {2}", test_count(), packet_size, packet_ptr)  << std::endl;
+      std::exit(HOOKLIB_EC_PAIR);
+    }
+    // go back and hijack arguments
+    return;
+  }
+  
+  
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     std::array<int, 2> sockets{0};
 
@@ -397,54 +424,55 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
       perror("socketpair");
       exit(HOOKLIB_EC_PAIR);
     }
-    int child_socket = sockets[1];
-    int parent_socket = sockets[0];
-    // LLCAP-SERVER <---- UNIX domain socket ----> PARENT
-    // <--par_sock]-------[child_sock--> CHILD
+    int test_process_socket = sockets[1];
+    int coordinator_socket = sockets[0];
+    // LLCAP-SERVER <---- UNIX domain socket ----> COORDINATOR
+    // <--coor_sock]-------[test_sock--> TEST PROCESS
 
     pid_t pid = fork();
     if (pid == 0) {
-      // CHILD
-      init_packet_socket(child_socket, test_idx);
+      // TEST PROCESS
+      init_packet_socket(test_process_socket, test_idx);
       // populates "argument packet" that will be used by instrumentation
       if (!receive_packet_proto()) {
         perror("Failed to receive argument packet protobuf\n");
-        exit(HOOKLIB_EC_RECV_PKT);
+        std::quick_exit(HOOKLIB_EC_RECV_PKT);
       }
-      // in child process, return to resume execution (start hijacking)
+      // in the test process, return to resume execution (start hijacking)
       return;
     }
-    // PARENT
+    // COORDINATOR
     int status = -1;
-    EMsgEnd result = serve_for_child_until_end(
-        parent_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+    EMsgEnd result = serve_for_other_until_end(
+        coordinator_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
     if (result == EMsgEnd::MSG_END_FATAL) {
       // attempt to provide all the errors
       std::cerr.flush();
       std::cout.flush();
     }
+
     if (result != EMsgEnd::MSG_END_STATUS &&
         result != EMsgEnd::MSG_END_SIGNAL && result != EMsgEnd::MSG_END_EXC &&
         result != EMsgEnd::MSG_END_PASS) {
-      // kill the child on non-exiting result (timeout, error, ...)
+      // kill the test process on non-exiting result (timeout, error, ...)
       // KILL and STOP cannot be ignored
       kill(pid, SIGSTOP);
     }
 
     if (!send_test_end_message(test_idx, result, status)) {
-      exit(HOOKLIB_EC_TX_END);
+      std::exit(HOOKLIB_EC_TX_END);
     }
   }
 
   if (!send_finish_message()) {
-    exit(HOOKLIB_EC_TX_FIN);
+    std::exit(HOOKLIB_EC_TX_FIN);
   }
 
-  exit(0);
+  std::exit(0);
 }
 // TODO: improve upon (MT support)
-thread_local ::llcaproto::Arguments *s_capptured_args;
-thread_local google::protobuf::Arena s_arena;
+::llcaproto::Arguments *s_capptured_args;
+google::protobuf::Arena s_arena;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
@@ -519,11 +547,24 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
     return;
   }
 
-  if (!send_test_pass_to_monitor(exception)) {
-    perror("signal end to monitor");
+  if (mt_compat_testing()) {
+    // status sent as -1 - the status will not be inspected because if code reaches here,
+    // we are finishing via instrumented code (this function)
+    // in other words, if the program fails, execution will not reach here and llcap-server will 
+    // have to deal with our status code on its own
+    if (!send_test_end_message(test_count(), exception ? EMsgEnd::MSG_END_EXC : EMsgEnd::MSG_END_PASS, -1)) {
+      perror("signal end to monitor from mt_compat\n");
+    }
+
+    // the ENDPASS_CODE is needed only for the forking testing mode (we already sent it via the send_test_end_message)
+    std::exit(0);
   }
 
-  exit(ENDPASS_CODE);
+  // this means we are in a child process
+  if (!send_test_pass_to_monitor(exception)) {
+    perror("signal end to monitor\n");
+  }
+  std::quick_exit(ENDPASS_CODE);
 }
 
 // here are all the hooks used by the llvm-pass

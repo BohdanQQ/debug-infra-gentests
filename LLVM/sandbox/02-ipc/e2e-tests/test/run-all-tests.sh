@@ -7,20 +7,21 @@ function run-test {
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  MTArg=$1; shift
   ExtraArgs=$*; shift;
 
   IRTestScript="$OutTestScript"/ir;
   cd ../
   
   ./llcap-cleanup.sh
-  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" $ExtraArgs
+  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "$MTArg" $ExtraArgs
 
   if [[ "$?" != "0" ]]
   then
     echo "Failed test $TestDir with test scripts $OutTestScript and $IRTestScript with cmd ./test.sh ./$TestDir $TestedFnName $Timeout"
     cd ./test
     echo "Cmd:"
-    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" \"\" \"$ExtraArgs\""
+    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" \"$MTArg\" \"$ExtraArgs\""
     exit 1
   fi
   cd ./test
@@ -33,7 +34,8 @@ function run-test-in-directory-custom-buffers {
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" ""
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" --mt
 }
 
 
@@ -44,7 +46,8 @@ function run-test-in-directory-fn-end-instr {
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
   
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" -mllvm -llcap-instrument-fn-exit
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "" -mllvm -llcap-instrument-fn-exit
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" --mt -mllvm -llcap-instrument-fn-exit
 }
 
 function run-tests-with-buffers {
@@ -55,6 +58,7 @@ function run-tests-with-buffers {
   # testbin-* are directories where tests are run
   # the numeric literal is the test timeout
   run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
+  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
   
   # test_target - the name of the tested function (see the sources of the tests)
   run-test-in-directory-custom-buffers "testbin-arg-replacement-large" "test_target" 5 "$Size" "$Count"
@@ -67,7 +71,10 @@ function run-tests-with-buffers {
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-this" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-arg-replacement-sret-this-structarg" "test_target" 2 "$Size" "$Count"
   run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
+  
+  # pure C example
   run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
+  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
   # exceptions with auto-generated cleanup calls, wraps without return values
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc" "test_target" 5 "$Size" "$Count"
   # the above with return values

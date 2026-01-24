@@ -7,6 +7,7 @@ static_assert(sizeof(unsigned int) == 4, "expected size of u32");
 static_assert(sizeof(unsigned short) == 2, "expected size of u16");
 #endif
 
+// NOLINTBEGIN(modernize-use-using)
 typedef struct {
   unsigned int buff_count;
   unsigned int buff_len;
@@ -15,7 +16,7 @@ typedef struct {
   
   // false if zero, indicates whether we are in capture mode or not
   unsigned int mode; // required for argument capture and testing, 0 for call
-                     // tracing, 1 for capture, 2 for testing
+                     // tracing, 1 for capture, 2 for testing, 3 for nofork testing (multithreading support) and test_count is used as the packet index to be requested
   // the below is required for only the testing phase
   // identifier of function under test
   unsigned int target_fnid;
@@ -25,6 +26,7 @@ typedef struct {
   // multiple times
   unsigned int forked;
   // number of tests to be performed (number of forks to perform)
+  // or (if mode == 3 - MT support), the index of the packet to be requested from the llcap-server
   unsigned int test_count;
   // the number of the call of the target function to instrument
   // utitlized by decrementing this value on each call -> equality to 1
@@ -33,6 +35,7 @@ typedef struct {
   unsigned int target_call_number;
   unsigned short test_timeout_seconds;
 } ShmMeta;
+// NOLINTEND(modernize-use-using)
 
 // message types the test coordinator sends to the llcap-server
 static const unsigned short TAG_START = 0;

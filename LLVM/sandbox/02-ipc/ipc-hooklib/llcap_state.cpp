@@ -94,7 +94,12 @@ void deinit(void) {
   deinit_channel(&s_channel);
 }
 
-bool in_testing_mode(void) { return s_buff_info.mode == 2; }
+bool in_testing_mode(void) { return s_buff_info.mode == 2 || s_buff_info.mode == 3; }
+
+bool mt_compat_testing() {
+  return s_buff_info.mode == 3;
+}
+
 bool in_testing_fork(void) { return s_buff_info.forked != 0; }
 uint16_t get_test_tout_secs(void) {
   return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0;
@@ -128,6 +133,19 @@ bool is_fn_under_test(uint32_t mod, uint32_t fn) {
 static ::llcaproto::Arguments *sp_packet = NULL;
 // how much data has been alread read
 static int s_current_idx = 0;
+
+bool locally_initialize_arg_packet(void* owning_packet, int packet_size) {
+  sp_packet = new ::llcaproto::Arguments;
+  if (sp_packet == nullptr) {
+    perror("Failed to alloc proto packet");
+    free(owning_packet);
+    return false;
+  }
+  sp_packet->ParseFromArray(owning_packet, packet_size);
+  s_current_idx = 0;
+  free(owning_packet);
+  return true;
+}
 
 #define PAYLOAD_T uint64_t
 
@@ -167,19 +185,9 @@ bool receive_packet_proto(void) {
     return false;
   }
 
-  sp_packet = new ::llcaproto::Arguments;
-  if (sp_packet == NULL) {
-    perror("Failed to alloc packet");
-    free(packet);
-    return false;
-  }
-  sp_packet->ParseFromArray(packet, static_cast<int>(packet_size));
-  s_current_idx = 0;
-  free(packet);
-
   // the packet is freed once all of its bytes are read (see
   // get_next_arg)
-  return true;
+  return locally_initialize_arg_packet(packet, static_cast<int>(packet_size));
 }
 
 const llcaproto::SingleArgVariant *get_next_arg() {

@@ -134,9 +134,9 @@ pub enum Stage {
     #[arg(short, long, default_value = Constants::default_capture_out_path())]
     capture_dir: PathBuf,
 
-    /// capture read memory limit in MEBIBYTES
-    #[arg(short = 'l', long, default_value = "0")]
-    mem_limit: u32,
+    /// support multithreaded testing (slower)
+    #[arg(long = "mt")]
+    mt_support: bool,
 
     /// Redirects output to a file or a directory instead of the standard output (target directory must exist beforehand otherwise the path is treated as a file path)
     #[arg(short = 'o', long)]
@@ -162,5 +162,9 @@ pub enum Stage {
     /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte HEXAdecimal module/function id and DD is a DECIMAL index of the packet
     #[arg(long, value_parser=parse_pkt_inspect)]
     inspect_packets: Option<PacketInspecSpec>,
+
+    /// capture read memory limit in MEBIBYTES
+    #[arg(short = 'l', long, default_value = "0")]
+    mem_limit: u32,
   },
 }

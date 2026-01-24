@@ -89,6 +89,13 @@ bool receive_packet_proto(void);
 // stores the descriptor and the packet index that will be requested
 void init_packet_socket(int fd, uint64_t request_idx);
 
+// whether we're performing only a single testcase in this process 
+// (and thus not performing a fork)
+bool mt_compat_testing(void);
+
+// initializes argument packet
+bool locally_initialize_arg_packet(void* owning_packet, int packet_size);
+
 #ifdef __cplusplus
 }
 #endif

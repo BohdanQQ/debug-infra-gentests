@@ -14,6 +14,7 @@ OutputTestScriptDir=$1; shift
 IRTestScriptDir=$1; shift
 LlcapBufSz=$1; shift
 LlcapBufCnt=$1; shift
+MTTest=$1; shift # don't quote this - will either be --mt or empty
 CppArgs=$*;
 
 cd "$WorkingDir"
@@ -124,17 +125,27 @@ ArgTraceDir="$OutputsDir"/arg-traces-dir
 TestOutputsDir="$OutputsDir"/test-outputs
 
 echo "!!! Capturing"
+set -x
 
 rm -rf "$ArgTraceDir" && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  capture-args -s "$SelectionPath" -o "$ArgTraceDir" "$InstrumentedBin"
+
+set +x
 
 echo "!!! Testing"
 
 mkdir -p "$TestOutputsDir"
 
-Output=$(rm -rf "${TestOutputsDir:?}"/* && "$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
+rm -rf "${TestOutputsDir:?}"/*
+
+set -x
+
+Output=$("$LlcapSvrBin" $LlcapVerbosity -s "$LlcapBufSz" -c "$LlcapBufCnt" --modmap "$ModMapsPath"\
  test -s "$SelectionPath" -t "$TimeoutSec" -c "$ArgTraceDir"\
- -o "$TestOutputsDir" "$InstrumentedBin")
+ -o "$TestOutputsDir" $MTTest "$InstrumentedBin")
+
+set +x
+
 
 if [[ $LLCAP_ECHO_OUT ]]; then
   echo "$Output"
