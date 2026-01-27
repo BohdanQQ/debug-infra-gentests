@@ -4,6 +4,7 @@ pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
+use core::ffi;
 use std::ffi::CStr;
 use std::slice;
 use std::time::Duration;
@@ -513,6 +514,7 @@ pub struct TestParams {
   pub test_count: u32,
   pub target_call_number: u32,
   pub timeout: Duration,
+  pub mode: u32
 }
 
 pub fn send_test_metadata(
@@ -528,7 +530,7 @@ pub fn send_test_metadata(
       buff_count: infra.buff_count,
       buff_len: infra.buff_len,
       total_len: infra.buff_count * infra.buff_len,
-      mode: 2,
+      mode: params.mode,
       target_fnid: *fn_uid.function_id,
       target_modid: *fn_uid.module_id,
       forked: 0,
@@ -602,9 +604,9 @@ impl MetadataPublisher {
 
     {
       Log::get("MetadataPublisher::publish").trace(format!(
-        "Thread Count {} vs real {}",
+        "Thread Count {} vs real {:?}",
         meta.thread_count,
-        thread_ids.map_or(0, Vec::len)
+        thread_ids
       ));
 
       let mem = self.shm.borrow_ptr_mut()?;
@@ -613,8 +615,7 @@ impl MetadataPublisher {
         // SAFETY: allocation of self.shm (mainly the size)
         // unaligned write just to be sure
         (tmp_mem as *mut ShmMeta).write_unaligned(meta);
-        tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<ShmemHandle>() as isize);
-
+        tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<ShmMeta>() as isize);
         if let Some(ids) = thread_ids {
           for v in ids {
             (tmp_mem as *mut u64).write_unaligned(*v);

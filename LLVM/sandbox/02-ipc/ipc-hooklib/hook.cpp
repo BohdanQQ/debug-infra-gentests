@@ -392,7 +392,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     std::cerr << "Failed send start message" << std::endl;
     std::exit(HOOKLIB_EC_START);
   }
-  
+
   set_fork_flag(); // setting the flag in both parent and the fork should not
                    // matter, this function never returns in the fork's parent
                    // (test coordinator)
@@ -400,24 +400,32 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // but the behavior should remain the same (call counts, ...)
 
   if (mt_compat_testing()) {
-    void* packet_ptr = nullptr;
+    void *packet_ptr = nullptr;
     uint32_t packet_size = 0;
-    // in this mode, the test_count is the actual index of the test to request from the server
+    // in this mode, the test_count is the actual index of the test to request
+    // from the server
     if (!request_packet_from_server(test_count(), &packet_ptr, &packet_size)) {
-      std::cerr << std::format("Packet request failed with idx {0}, received size {1}", test_count(), packet_size)  << std::endl;
+      std::cerr << std::format(
+                       "Packet request failed with idx {0}, received size {1}",
+                       test_count(), packet_size)
+                << std::endl;
       std::exit(HOOKLIB_EC_RECV_PKT);
     }
 
-
-    if(packet_ptr == nullptr || !locally_initialize_arg_packet(packet_ptr,static_cast<int>(packet_size))) {
-      std::cerr << std::format("Packet init failed with idx {0}, received size {1}, packet ptr {2}", test_count(), packet_size, packet_ptr)  << std::endl;
+    if (packet_ptr == nullptr ||
+        !locally_initialize_arg_packet(packet_ptr,
+                                       static_cast<int>(packet_size))) {
+      std::cerr << std::format("Packet init failed with idx {0}, received size "
+                               "{1}, packet ptr {2}",
+                               test_count(), packet_size, packet_ptr)
+                << std::endl;
       std::exit(HOOKLIB_EC_PAIR);
     }
     // go back and hijack arguments
     return;
   }
-  
-  
+
+
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     std::array<int, 2> sockets{0};
 
@@ -445,7 +453,8 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     // COORDINATOR
     int status = -1;
     EMsgEnd result = serve_for_other_until_end(
-        coordinator_socket, pid, static_cast<int>(get_test_tout_secs()), &status);
+        coordinator_socket, pid, static_cast<int>(get_test_tout_secs()),
+        &status);
     if (result == EMsgEnd::MSG_END_FATAL) {
       // attempt to provide all the errors
       std::cerr.flush();
@@ -473,7 +482,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 }
 // TODO: improve upon (MT support)
 ::llcaproto::Arguments *s_capptured_args;
-google::protobuf::Arena s_arena;
+thread_local google::protobuf::Arena s_arena;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
@@ -497,12 +506,13 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // desired one we must furhter determine whether we are in the "right" call
   // (n-th call)
   if (!in_testing_fork() && is_fn_under_test(module_id, fn_id)) {
-    // modifies call counter
+    // modifies call counter for this thread
     register_call();
 
     // should_hijack_arg becomes true as soon as the coutner updated above
     // indicates that we "should instrument this call"
     if (should_hijack_arg()) {
+      std::cerr << "TESTING" << std::endl;
       perform_testing(module_id, fn_id, get_call_num());
       // PARENT process never returns from the first call to instrumented
       // function CHILD process simply continues execution, should_hijack_arg is
@@ -552,15 +562,18 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
   }
 
   if (mt_compat_testing()) {
-    // status sent as -1 - the status will not be inspected because if code reaches here,
-    // we are finishing via instrumented code (this function)
-    // in other words, if the program fails, execution will not reach here and llcap-server will 
-    // have to deal with our status code on its own
-    if (!send_test_end_message(test_count(), exception ? EMsgEnd::MSG_END_EXC : EMsgEnd::MSG_END_PASS, -1)) {
+    // status sent as -1 - the status will not be inspected because if code
+    // reaches here, we are finishing via instrumented code (this function) in
+    // other words, if the program fails, execution will not reach here and
+    // llcap-server will have to deal with our status code on its own
+    if (!send_test_end_message(
+            test_count(),
+            exception ? EMsgEnd::MSG_END_EXC : EMsgEnd::MSG_END_PASS, -1)) {
       perror("signal end to monitor from mt_compat\n");
     }
 
-    // the ENDPASS_CODE is needed only for the forking testing mode (we already sent it via the send_test_end_message)
+    // the ENDPASS_CODE is needed only for the forking testing mode (we already
+    // sent it via the send_test_end_message)
     std::exit(0);
   }
 
@@ -654,6 +667,7 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
       }
       /* is safe assuming the incoming messages are of correct order */
       *target = static_cast<NumT>(NestTrait::extract(*arg));
+      std::cerr << "Replaced " << n << " with " << *target;
     }
     return;
   }

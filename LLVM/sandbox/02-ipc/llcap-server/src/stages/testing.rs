@@ -511,6 +511,7 @@ impl TestGenerator for ForkingTestJobParams {
       target_call_number: call_idx + 1,
       timeout: self.test_case_timeout,
       test_count: self.test_count,
+      mode: 1
     }
   }
 
@@ -550,6 +551,7 @@ impl TestGenerator for MultithreadTestJobParams {
       target_call_number: call_idx + 1,
       timeout: self.test_case_timeout,
       test_count: self.packet_count,
+      mode: 3
     }
   }
 

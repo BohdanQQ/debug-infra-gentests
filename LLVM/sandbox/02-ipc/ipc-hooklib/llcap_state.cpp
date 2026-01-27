@@ -3,18 +3,34 @@
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
 #include "shm_write_channel.h"
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
+#include <iostream>
 #include <memory>
+#include <optional>
 #include <semaphore.h>
+#include <print>
+#include <thread>
+#include <threads.h>
 #include <unistd.h>
+#include <vector>
 
-#define PUSH_FALURE 230
+#ifdef DEBUG
+constexpr bool DBG = true;
+#else
+constexpr bool DBG = true;
+#endif
+
+constexpr int ID_FAILURE { 229 };
+constexpr int PUSH_FALURE { 230 };
 
 static ShmMeta s_buff_info;
+// temporary static space for thread counts that is used during initialization
 static std::vector<uint64_t> s_thread_counts;
 
 // should be initialized and updated such that
@@ -29,7 +45,7 @@ static WriteChannel s_channel;
 
 static bool populate_static_metadata(const void* source, uint32_t size) {
   if (size < sizeof(s_buff_info)) {
-    printf("Unexpected size %u, expected %lu\n", size, sizeof(s_buff_info));
+    std::println("Unexpected size %u, expected %lu\n", size, sizeof(s_buff_info));
     return false;
   }
   memcpy(&s_buff_info, source, sizeof(s_buff_info));
@@ -37,11 +53,16 @@ static bool populate_static_metadata(const void* source, uint32_t size) {
   // note: if expected is zero, nothing will be read
   // this happens in the original forking mode (metadata publisher tech debt...)
   if (expected != 0 && sizeof(s_buff_info) + expected != size) {
-    printf("Unexpected size %u, expected %u + %lu\n", size, expected, sizeof(s_buff_info));
+    std::println("Unexpected size %u, expected %u + %lu\n", size, expected, sizeof(s_buff_info));
     return false;
   }
-  s_thread_counts.resize(s_buff_info.thread_count);
-  memcpy(s_thread_counts.data(), static_cast<const char*>(source) + sizeof(s_buff_info), expected);
+  if constexpr (DBG) {
+    std::println("Thread count: {} {} {}", s_buff_info.thread_count, expected, size);
+  }
+  const auto* arr = reinterpret_cast<const uint64_t*>(static_cast<const ShmMeta*>(source) + 1);
+  for (uint32_t i = 0; i < expected; ++i) {
+    s_thread_counts.push_back(arr[i]);
+  }
   return true;
 }
 
@@ -49,32 +70,130 @@ static bool get_buffer_info() {
   return oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME, META_MEM_SIZE_NAME, populate_static_metadata, 1024U * 1024U * 1024U * 2U);
 }
 
+thread_local std::optional<uint32_t> t_logical_id = std::nullopt;
+
+// obtains a new logical thread ID for the thread
+uint32_t get_new_logical_id() {
+  static std::atomic<uint32_t> auto_increment{0};
+  auto cpy = auto_increment.load();
+  auto to_store = cpy + 1;
+  while (!auto_increment.compare_exchange_strong(cpy, to_store, std::memory_order_seq_cst, std::memory_order_seq_cst)) {
+    cpy = auto_increment.load();
+    to_store = cpy + 1;
+  };
+  if constexpr (DBG) {
+    std::println("Thread ID {} mapped to logical ID {}", std::this_thread::get_id(), cpy);
+  }
+  return cpy;
+}
+
+// Encapsulates the querying over call counts in the multithreaded-support mode
+// only one global instance shall exist
+class CallCounter {
+  std::vector<uint64_t> m_counts;
+  public:
+  explicit CallCounter(std::vector<uint64_t>&& counts) : m_counts(std::move(counts)) {}
+  
+  void register_call() {    
+    if (!t_logical_id.has_value()) {
+      if constexpr (DBG) {
+        std::println("Registering call for {}", std::this_thread::get_id());
+      }
+      t_logical_id = get_new_logical_id();
+    } else {
+      if constexpr (DBG) {
+        std::println("Registering call for {}", *t_logical_id);
+      }
+    }
+    auto logId = *t_logical_id;
+
+    if (logId >= m_counts.size()) {
+      std::println(std::cerr, "Thread ID of unexpected value {} - size: {}", logId, m_counts.size());
+      std::quick_exit(ID_FAILURE);
+    }
+
+    if (m_counts[logId] > 0) {
+      if constexpr (DBG) {
+        std::println("Registered {} @ {}", logId, m_counts[logId]);
+      }
+      // s_call_countdown 0 means, that the testing has already been performed
+      // 1 means we will be testing the call that caused register_call to be
+      // called otherwise "we are not at the desired call yet"
+      m_counts[logId]--;
+    }
+  }
+
+  uint32_t get_call_num() {
+    if (!t_logical_id) {
+      std::println(std::cerr, "get_call_num expects the logical ID to be assigned");
+      std::quick_exit(ID_FAILURE);
+    }
+    return static_cast<uint32_t>(s_buff_info.target_call_number + 1 - m_counts[*t_logical_id]);
+  }
+
+  void disable_hijacking() { 
+    if (!t_logical_id) {
+       std::println(std::cerr, "disable_hijacking expects the logical ID to be assigned");
+       std::quick_exit(ID_FAILURE);
+    }
+    m_counts[*t_logical_id] = 0; 
+  }
+
+  bool should_hijack_arg() {
+    // TODO make this "ensure_has_logical_id"
+    if (!t_logical_id.has_value()) {
+      if constexpr (DBG) {
+        std::println("Registering call for {}", std::this_thread::get_id());
+      }
+      t_logical_id = get_new_logical_id();
+    }
+
+    return m_counts[*t_logical_id] == 1; }
+};
+
+static std::unique_ptr<CallCounter> s_call_countdown_instance{};
+
 // sets up the semaphores and information required for buffer management
 // if this returns 0, s_channel is ready for use
 static int setup_infra(void) {
   int rv = 1;
 
   if (!get_buffer_info()) {
-    printf("Could not obtain buffer info\n");
+    std::println("Could not obtain buffer info");
     return rv;
   }
 
-  // TODO ( s_thread_counts)
-  s_call_countdown = s_buff_info.target_call_number + 1;
+  if (mt_compat_testing()) {
+    if constexpr (DBG) {
+      std::println("MT compat... Thread counts:");
+    }
+    for(auto& v : s_thread_counts) {
+      if constexpr (DBG) {
+        std::print("{} ", v);
+      }
+      v += 1;
+    }
+    if constexpr (DBG) {
+      std::println("");
+    }
+    s_call_countdown_instance = std::make_unique<CallCounter>(std::move(s_thread_counts));
+  } else {
+    s_call_countdown = s_buff_info.target_call_number + 1;
+  }
 
   ChannelInfo info;
   info.buff_count = s_buff_info.buff_count;
   info.buff_len = s_buff_info.buff_len;
   info.total_len = s_buff_info.total_len;
 #ifdef DEBUG
-  printf("Buffer info: cnt %u, len %u, tot %u, mod %u, fn %u, tests %u, args "
-         "%u, mode %u\n",
+  std::println("Buffer info: cnt %u, len %u, tot %u, mod %u, fn %u, tests %u, args "
+         "%u, mode %u",
          info.buff_count, info.buff_len, info.total_len,
          s_buff_info.target_modid, s_buff_info.target_fnid,
          s_buff_info.test_count, s_buff_info.arg_count, s_buff_info.mode);
 #endif // DEBUG
   if (info.buff_count * info.buff_len != info.total_len) {
-    printf("sanity check failed - buffer sizes\n");
+    std::println("sanity check failed - buffer sizes");
     return -1;
   }
 
@@ -87,8 +206,8 @@ static int setup_infra(void) {
 
 int init(void) {
   if (setup_infra() != 0) {
-    printf("Failed to init infra\n");
-    exit(-1);
+    std::println("Failed to init infra");
+    std::exit(-1);
   }
   if (in_testing_mode()) {
     return 0;
@@ -97,14 +216,15 @@ int init(void) {
 }
 
 int push_data(const void *source, uint32_t len) {
-#ifdef DEBUG
+if constexpr (DBG) {
+  std::print("{} | ", std::this_thread::get_id());
   for (uint32_t i = 0; i < len; ++i) {
-    printf("%02X", ((uint8_t *)source)[i]);
+    std::print("{:02X} ", ((uint8_t *)source)[i]);
   }
-  printf(" %u\n", len);
-#endif
+  std::println("| {}", len);
+}
   if (channel_write(&s_channel, source, len) != 0) {
-    exit(PUSH_FALURE);
+    std::exit(PUSH_FALURE);
   }
   return 0;
 }
@@ -132,9 +252,18 @@ uint32_t test_count(void) { return s_buff_info.test_count; }
 void set_fork_flag(void) { s_buff_info.forked = 1; }
 
 uint32_t get_call_num(void) {
+  if (mt_compat_testing()) {
+    return s_call_countdown_instance->get_call_num();
+  }
+  
   return s_buff_info.target_call_number + 1 - s_call_countdown;
 }
 void register_call(void) {
+  if (mt_compat_testing()) {
+    s_call_countdown_instance->register_call();
+    return;
+  }
+
   if (s_call_countdown > 0) {
     // s_call_countdown 0 means, that the testing has already been performed
     // 1 means we will be testing the call that caused register_call to be
@@ -143,9 +272,17 @@ void register_call(void) {
   }
 }
 
-void disable_hijacking(void) { s_call_countdown = 0; }
+void disable_hijacking(void) {
+  if (mt_compat_testing()) {
+    s_call_countdown_instance->disable_hijacking();
+  } else {
+    s_call_countdown = 0; 
+  }
+}
 
-bool should_hijack_arg(void) { return s_call_countdown == 1; }
+bool should_hijack_arg(void) { 
+  return mt_compat_testing() ? s_call_countdown_instance->should_hijack_arg() : s_call_countdown == 1;
+}
 
 bool is_fn_under_test(uint32_t mod, uint32_t fn) {
   return in_testing_mode() && s_buff_info.target_modid == mod &&
@@ -153,18 +290,12 @@ bool is_fn_under_test(uint32_t mod, uint32_t fn) {
 }
 
 // local argument packet storage
-static ::llcaproto::Arguments *sp_packet = NULL;
+static ::llcaproto::Arguments sp_packet;
 // how much data has been alread read
 static int s_current_idx = 0;
 
 bool locally_initialize_arg_packet(void* owning_packet, int packet_size) {
-  sp_packet = new ::llcaproto::Arguments;
-  if (sp_packet == nullptr) {
-    perror("Failed to alloc proto packet");
-    free(owning_packet);
-    return false;
-  }
-  sp_packet->ParseFromArray(owning_packet, packet_size);
+  sp_packet.ParseFromArray(owning_packet, packet_size);
   s_current_idx = 0;
   free(owning_packet);
   return true;
@@ -214,14 +345,10 @@ bool receive_packet_proto(void) {
 }
 
 const llcaproto::SingleArgVariant *get_next_arg() {
-  if (sp_packet == nullptr) {
+  if (sp_packet.values().size() <= s_current_idx) {
     return nullptr;
   }
-  if (sp_packet->values().size() <= s_current_idx) {
-    free(sp_packet);
-    return nullptr;
-  }
-  return std::addressof(sp_packet->values()[s_current_idx++]);
+  return std::addressof(sp_packet.values()[s_current_idx++]);
 }
 
 bool send_test_pass_to_monitor(bool exception) {
@@ -243,7 +370,7 @@ bool send_test_pass_to_monitor(bool exception) {
 int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
   sem_t *sem_full = sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
   if (sem_full == SEM_FAILED) {
-    printf("Failed to initialize FULL semaphore %s\n", name_full_sem);
+    std::println("Failed to initialize FULL semaphore %s\n", name_full_sem);
     perror("");
     return 1;
   }

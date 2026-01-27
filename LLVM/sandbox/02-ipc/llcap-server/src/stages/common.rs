@@ -183,9 +183,9 @@ impl CommonStageParams {
     // this is a hooklib limit and must be kept in sync
     // use e2e tests to check for validity of this value (run tests with buffer size equal to MIN_BUFF_SIZE)
     ensure!(
-      buff_size / buff_count >= MIN_BUFF_SIZE,
+      buff_size >= MIN_BUFF_SIZE,
       "Buffer size must be larger (at least {})",
-      MIN_BUFF_SIZE * buff_count
+      MIN_BUFF_SIZE
     );
     Ok(CommonStageParams {
       modules: Some(modules),

@@ -49,9 +49,6 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
       goto close_sem;
   }
   memcpy(&sz_to_alloc, source, sizeof(sz_to_alloc));
-  for (int i = 0; i < 4; ++i) {
-    printf("%u\n", (int)*(((unsigned char*)source) + i));
-  }
   unmap_shmem(source, fd, shm_size_name, sizeof(sz_to_alloc), UNMAP_SHMEM_FLAG_TRY_ALL);
   
   if (sz_to_alloc > max_size) {
