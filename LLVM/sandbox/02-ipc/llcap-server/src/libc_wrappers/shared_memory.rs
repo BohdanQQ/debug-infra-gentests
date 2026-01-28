@@ -11,6 +11,8 @@ use libc::{
   munmap, shm_open,
 };
 
+use crate::log::Log;
+
 use super::{
   fd::try_shm_unlink_fd,
   wrappers::{PERMS_PERMISSIVE, to_cstr},
@@ -72,6 +74,8 @@ impl ShmemHandle {
   }
 
   pub fn try_mmap(path: &CStr, len: u32) -> Result<Self> {
+    Log::get("try_mmap").trace(format!("Mapping memory @[{len}] {path:?}"));
+
     let unlinking_handler = |error_string: String| {
       let unlink_res =
         try_shm_unlink_fd(path).map_err(|e| anyhow!("{e} - message: {error_string}"));

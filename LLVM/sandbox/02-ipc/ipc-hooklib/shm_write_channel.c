@@ -173,7 +173,7 @@ int init_write_channel_with_info(const char *channel_name, const char *type,
   size_t buff_total_size = get_buff_total_sz(info);
   if (mmap_shmem(target->names.name_buff_mem, &target->buffer_base,
                  &target->file_descriptor, buff_total_size, true) != 0) {
-    printf("Channel shmem mapping failed!");
+    printf("Channel shmem writable mapping failed!\nSize: %ld\n", buff_total_size);
     goto fail_close_free_sem;
   }
 

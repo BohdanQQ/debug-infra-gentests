@@ -4,7 +4,6 @@ pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
-use core::ffi;
 use std::ffi::CStr;
 use std::slice;
 use std::time::Duration;
