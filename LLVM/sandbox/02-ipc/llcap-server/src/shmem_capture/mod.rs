@@ -508,12 +508,18 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
   )
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum TestingMode {
+  Testing,
+  MTCompatTesting,
+}
+
 #[derive(Debug)]
 pub struct TestParams {
   pub test_count: u32,
   pub target_call_number: u32,
   pub timeout: Duration,
-  pub mode: u32
+  pub mode: TestingMode,
 }
 
 pub fn send_test_metadata(
@@ -529,7 +535,10 @@ pub fn send_test_metadata(
       buff_count: infra.buff_count,
       buff_len: infra.buff_len,
       total_len: infra.buff_count * infra.buff_len,
-      mode: params.mode,
+      mode: match params.mode {
+        TestingMode::Testing => 2,
+        TestingMode::MTCompatTesting => 3,
+      },
       target_fnid: *fn_uid.function_id,
       target_modid: *fn_uid.module_id,
       forked: 0,
@@ -603,9 +612,8 @@ impl MetadataPublisher {
 
     {
       Log::get("MetadataPublisher::publish").trace(format!(
-        "Thread Count {} vs real {:?}",
-        meta.thread_count,
-        thread_ids
+        "Thread Count {} vs real {thread_ids:?}",
+        meta.thread_count
       ));
 
       let mem = self.shm.borrow_ptr_mut()?;

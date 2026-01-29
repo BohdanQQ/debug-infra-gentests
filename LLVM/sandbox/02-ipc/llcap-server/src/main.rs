@@ -38,8 +38,8 @@ use crate::{
       CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
     },
     testing::{
-      ForkingTestJobParams, LogResult, MultithreadTestJobParams, TestGenerator, TestJobFailure,
-      TestOutputPathGen, TestStatus,
+      CallIndexT, ForkingTestJobParams, LogResult, MultithreadTestJobParams, PacketIndexT,
+      TestGenerator, TestJobFailure, TestOutputPathGen, TestStatus,
     },
   },
 };
@@ -291,12 +291,12 @@ async fn main() -> Result<()> {
           lg.progress(format!("Run program for fn {fn_uid:?}"));
 
           if mt_support {
+            // TODO: thread loop
             for test_index in 0..test_count {
               let test_job = MultithreadTestJobParams {
                 fn_uid,
-                test_index,
                 test_case_timeout,
-                packet_count: test_count,
+                test_count,
                 job_timeout: global_timeout,
                 command: command.clone(),
                 thread_counters: thread_counts.clone(),
@@ -307,8 +307,16 @@ async fn main() -> Result<()> {
                 output_gen.clone(),
               );
 
-              if let Err(e) = test_job.await? {
-                errors.push(e);
+              for res in test_job.await? {
+                match res {
+                  Err(e) => errors.push(e),
+                  Ok(v) => results.lock().unwrap().push(LogResult {
+                    uid: fn_uid,
+                    call: CallIndexT(test_index + 1),
+                    pkt: PacketIndexT(test_count as u64),
+                    status: v,
+                  }),
+                }
               }
             }
           } else {
@@ -330,8 +338,10 @@ async fn main() -> Result<()> {
       }
       lg.progress("Waiting for jobs to finish...");
       for fut in futs {
-        if let Err(e) = fut.await? {
-          errors.push(e);
+        for r in fut.await? {
+          if let Err(e) = r {
+            errors.push(e);
+          }
         }
       }
 
@@ -390,7 +400,10 @@ async fn report_results(
         uid,
         call: stages::testing::CallIndexT(error.call_number),
         pkt: stages::testing::PacketIndexT(0),
-        status: TestStatus::Fatal(error.message),
+        status: match error.status {
+          Some(st) => st,
+          None => TestStatus::Fatal(error.message),
+        },
       })
       .await;
   }
