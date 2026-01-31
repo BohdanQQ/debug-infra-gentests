@@ -299,6 +299,20 @@ impl PacketReader {
       .get(&id)
       .map(|v| v.lock().unwrap().upcoming_packet_idx())
   }
+
+  pub fn try_read_packet(&mut self, id: NumFunUid, idx: usize) -> Option<Vec<u8>> {
+    let mx = self.get_packet_count(id)?;
+    if mx <= idx as u32 {
+      return None;
+    }
+    self.try_reset(id).map_or(None, |_| Some(()))?;
+
+    let mut v = None;
+    for _ in 0..=idx {
+      v = self.read_next_packet(id).ok()?
+    }
+    v
+  }
 }
 
 /// represents a forward packet iterator that may be reset to the begining

@@ -211,12 +211,9 @@ async fn main() -> Result<()> {
       command,
       inspect_packets: inspect_packet,
       report,
+      detailed_report,
       mt_support,
     } => {
-      let log_out = match report {
-        None => LogStrategy::StdOut,
-        Some(x) => LogStrategy::create(&x).await?,
-      };
       let command = Arc::new(command);
       lg.progress("Reading function selection");
       let selection = import_tracing_selection(&selection_file)?;
@@ -355,6 +352,20 @@ async fn main() -> Result<()> {
         match rmx {
           Ok(val) => {
             let mut unwrapped_res = val.into_inner()?;
+            let log_out = match report {
+              None => LogStrategy::StdOut,
+              Some(x) => {
+                LogStrategy::create(
+                  &x,
+                  if detailed_report {
+                    log::Detail::Detailed(modules, packet_reader)
+                  } else {
+                    log::Detail::Normal
+                  },
+                )
+                .await?
+              }
+            };
             report_results(log_out, &mut unwrapped_res, errors).await
           }
           Err(_) => Err(anyhow!("Failed to synchronize with the server")),

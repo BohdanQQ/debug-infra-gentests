@@ -1,6 +1,11 @@
-use std::{path::PathBuf, sync::atomic::AtomicU8};
+use std::{
+  path::PathBuf,
+  sync::{Arc, atomic::AtomicU8},
+};
 
 use tokio::{fs::File, io::AsyncWriteExt};
+
+use crate::{modmap::ExtModuleMap, stages::arg_capture::PacketReader};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum LogLevel {
@@ -159,25 +164,38 @@ impl Log {
   }
 }
 
+pub enum Detail {
+  Normal,
+  Detailed(Arc<ExtModuleMap>, PacketReader),
+}
+
 pub enum LogStrategy {
   StdOut,
   PlainText(File),
-  Json(File, bool),
+  Json {
+    file: File,
+    first: bool,
+    detail: Detail,
+  },
 }
 
 impl LogStrategy {
-  pub async fn create(file: &PathBuf) -> anyhow::Result<Self> {
+  pub async fn create(file: &PathBuf, detail: Detail) -> anyhow::Result<Self> {
     let ext = file.extension();
     match ext {
-      Some(e) if (e == "json") => Self::json(file).await,
+      Some(e) if (e == "json") => Self::json(file, detail).await,
       Some(e) if (e == "txt" || e == "out" || e == "log") => Self::plain_text(file).await,
       _ => Ok(Self::StdOut),
     }
   }
 
-  async fn json(path: &PathBuf) -> anyhow::Result<Self> {
+  async fn json(path: &PathBuf, detail: Detail) -> anyhow::Result<Self> {
     let f = File::create(path).await?;
-    Ok(Self::Json(f, true))
+    Ok(Self::Json {
+      file: f,
+      first: true,
+      detail,
+    })
   }
 
   async fn plain_text(path: &PathBuf) -> anyhow::Result<Self> {
@@ -209,7 +227,11 @@ impl LogStrategy {
         }
       }
       Self::PlainText(_) => self.put_str(stdout_str).await,
-      Self::Json(_, _) => self.put_str(json_str).await,
+      Self::Json {
+        file: _,
+        first: _,
+        detail: _,
+      } => self.put_str(json_str).await,
     }?;
     Ok(())
   }
@@ -217,7 +239,12 @@ impl LogStrategy {
   async fn put_str(&mut self, s: &str) -> anyhow::Result<()> {
     match self {
       Self::StdOut => println!("{s}"),
-      Self::Json(file, _) | Self::PlainText(file) => {
+      Self::Json {
+        file,
+        first: _,
+        detail: _,
+      }
+      | Self::PlainText(file) => {
         file.write_all(s.as_bytes()).await?;
       }
     };
@@ -227,7 +254,12 @@ impl LogStrategy {
   pub async fn put_loggable<T: IntoLogString>(&mut self, loggable: &T) -> anyhow::Result<()> {
     let str = loggable.get_log_string(self);
     self.put_str(&str).await?;
-    if let Self::Json(_, first) = self {
+    if let Self::Json {
+      file: _,
+      first,
+      detail: _,
+    } = self
+    {
       *first = false
     }
     Ok(())
@@ -235,5 +267,5 @@ impl LogStrategy {
 }
 
 pub trait IntoLogString {
-  fn get_log_string(&self, log_strat: &LogStrategy) -> String;
+  fn get_log_string(&self, log_strat: &mut LogStrategy) -> String;
 }

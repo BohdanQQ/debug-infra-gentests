@@ -38,7 +38,7 @@ pub struct LogResult {
 }
 
 impl IntoLogString for LogResult {
-  fn get_log_string(&self, log_strat: &LogStrategy) -> String {
+  fn get_log_string(&self, log_strat: &mut LogStrategy) -> String {
     let Self {
       call,
       uid,
@@ -53,15 +53,46 @@ impl IntoLogString for LogResult {
         call.0,
         pkt.0
       ),
-      LogStrategy::Json(_, first) => format!(
-        "{}\n\t{{\n\t\t\"module_id\":\"{}\",\n\t\t\"function_id\":\"{}\",\n\t\t\"call_idx\":{},\n\t\t\"packet_idx\":{},\n\t\t\"status\":\"{:?}\"\n\t}}",
-        if *first { "" } else { "," },
-        uid.module_id.hex_string(),
-        uid.function_id.hex_string(),
-        call.0,
-        pkt.0,
-        status
-      ),
+      LogStrategy::Json {
+        file: _,
+        first,
+        detail,
+      } => {
+        let def_modid = uid.module_id.hex_string();
+        let def_fnid = uid.function_id.hex_string();
+        let (module_id, fn_id, packet_hex) = match detail {
+          crate::log::Detail::Normal => (def_modid, def_fnid, None),
+          crate::log::Detail::Detailed(mods, packets) => {
+            let modid = mods
+              .get_module_string_id(uid.module_id)
+              .unwrap_or(&def_modid)
+              .to_owned();
+            let fnid = mods.get_function_name(*uid).unwrap_or(&def_fnid).to_owned();
+            let hex = packets
+              .try_read_packet(*uid, pkt.0 as usize)
+              .unwrap_or(vec![])
+              .iter()
+              .map(|v| format!("{v:02X}"))
+              .fold("".to_owned(), |acc, v| acc + &v);
+            (modid, fnid, Some(hex))
+          }
+        };
+
+        format!(
+          "{}\n\t{{\n\t\t\"module_id\":\"{}\",\n\t\t\"function_id\":\"{}\",\n\t\t\"call_n\":{},\n\t\t\"packet_idx\":{}{}\n\t\t\"status\":\"{:?}\"\n\t}}",
+          if *first { "" } else { "," },
+          module_id,
+          fn_id,
+          call.0,
+          pkt.0,
+          if let Some(hex) = packet_hex {
+            format!(",\n\t\t\"packet_hex\":\"{hex}\",")
+          } else {
+            ",".to_owned()
+          },
+          status
+        )
+      }
     }
   }
 }

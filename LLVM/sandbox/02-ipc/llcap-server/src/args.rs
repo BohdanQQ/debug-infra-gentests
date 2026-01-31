@@ -155,6 +155,10 @@ pub enum Stage {
     #[arg(long)]
     report: Option<PathBuf>,
 
+    /// Whether the report produced shall be fully detailed (so far, only JSON report format is supported)
+    #[arg(long)]
+    detailed_report: bool,
+
     /// Command to execute tested binary
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
