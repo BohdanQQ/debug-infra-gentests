@@ -17,6 +17,7 @@
 #include <format>
 #include <google/protobuf/arena.h>
 #include <iostream>
+#include <mutex>
 #include <ostream>
 #include <ranges>
 #include <string>
@@ -478,14 +479,24 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
 
   std::exit(0);
 }
-// TODO: improve upon (MT support)
 ::llcaproto::Arguments *s_capptured_args;
 thread_local google::protobuf::Arena s_arena;
+// # in argument tracing
+// the hook_arg_preamble and hook_arg_epilogue
+// use this mutex to ensure no other argument instrumentation is taking place
+// Note: the current implementation guarantees the thread
+// that is permitted to enter hook_arg_preamble is the only one (by keeping a a unique logical ID
+// per thread) and thus this mutex is "paranoid" in argument tracing mode
+
+// # in call tracing, the mutex is used to make the pair (Module ID, Function ID) transferred
+// atomically without interleavings with other threads' ID transfers
+std::mutex s_data_push_mutex;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
   // we just entered an instrumented function
   if (!in_testing_mode()) {
+    s_data_push_mutex.lock();
     // we are capturing function arguments, first we inform of the function
     // itself
     push_data(&module_id, sizeof(module_id));
@@ -531,6 +542,7 @@ void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id) {
   static std::vector<std::byte> buff(4096);
   uint64_t size = static_cast<uint32_t>(s_capptured_args->ByteSizeLong());
   if (size == 0) {
+    s_data_push_mutex.unlock();
     return;
   }
   if (size > buff.size()) {
@@ -541,6 +553,7 @@ void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id) {
   s_capptured_args->SerializeToArray(buff.data(), static_cast<int>(size));
   push_data(buff.data(), static_cast<uint32_t>(size));
   s_arena.Reset();
+  s_data_push_mutex.unlock();
 }
 
 int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id) {
@@ -588,6 +601,7 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
 
 void hook_start(uint32_t module_id, uint32_t fn_id) {
   // called during call tracing
+  auto guard = std::unique_lock{s_data_push_mutex};
   push_data(&module_id, sizeof(module_id));
   push_data(&fn_id, sizeof(fn_id));
 }

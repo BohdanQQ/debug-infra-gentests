@@ -566,7 +566,7 @@ pub async fn singular_test_job(
   let mut cmd = cmd_from_args(cmdline)
     .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
   if let Some(output_gen) = output_gen.as_ref() {
-    let id = format!("c{}-i{}", test.target_call_number(), packet_idx.0);
+    let id = format!("t{}-c{}-i{}", test.thread_lid.0, test.target_call_number(), packet_idx.0);
     let out_path = output_gen.get_out_path(m, f, &id);
     let err_path = output_gen.get_err_path(m, f, &id);
     cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(

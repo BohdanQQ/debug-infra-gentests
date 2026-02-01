@@ -102,6 +102,9 @@ function run-smoke-tests-with-buffers {
 
   # exceptions without cleanup calls, inner (exception-throwing) calls without a return value
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call" "test_target" 5 "$Size" "$Count"
+
+  # multithreading support - no data races
+  run-test-in-directory-custom-buffers-mt "testbin-mt-simple-norace" "test_target" 5 "$Size" "$Count"
 }
 
 function run-detail-tests-with-buffers {
@@ -120,11 +123,6 @@ function run-detail-tests-with-buffers {
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-rv" "test_target" 5 "$Size" "$Count"
   # exceptions without cleanup calls, inner (exception-throwing) calls with a return value
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call-rv" "test_target" 5 "$Size" "$Count"
-
-  # run-test-in-directory-custom-buffers-mt "testbin-mt-simple-norace" "test_target" 5 "$Size" "$Count"
-  # run-test-in-directory-custom-buffers-mt "testbin-mt-simple-norace" "test_target" 5 "$Size" "$Count"
-
-  # exit 0
 }
 
 # the defaults of the llcap-server

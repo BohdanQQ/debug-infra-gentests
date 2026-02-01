@@ -102,6 +102,7 @@ where
   {
     // do not hold accorss awaits
     let mut guard = metadata_svr.lock().unwrap();
+    guard.re_new()?;
     meta_sender(guard.deref_mut(), infra_params)?;
   }
 
