@@ -6,16 +6,16 @@ use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use std::ffi::CStr;
 use std::slice;
-use std::time::Duration;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
 use crate::libc_wrappers::sem::{FreeFullSemNames, Semaphore};
 use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
-use crate::modmap::{ExtModuleMap, NumFunUid};
+use crate::modmap::ExtModuleMap;
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
+use crate::stages::test_registry::{TestRegisryItem, TestingMode};
 use crate::stages::testing::test_server_socket;
 use libc::O_CREAT;
 
@@ -173,8 +173,10 @@ impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
 impl TracingInfra {
   /// blocks until a buffer has been filled by the instrumented applicaiton
   pub fn wait_for_full_buffer(&mut self) -> Result<BorrowedReadBuffer<'_>> {
-    let sem_res = self.sem_full.try_wait();
-    sem_res.map_err(|e| anyhow!("in wait_for_full_buffer: {e}"))?;
+    self
+      .sem_full
+      .try_wait(None)
+      .map_err(|e| anyhow!("in wait_for_full_buffer: {e}"))?;
     self.got_buff_flag = true;
     Log::get("get_buff").trace(format!("get @ index {}", self.current_index));
     self.get_checked_base_ptr()
@@ -483,8 +485,8 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       target_call_number: 0,
       test_timeout_seconds: 0,
       thread_count: 0,
+      target_thread_lid: 0,
     },
-    None,
   )
 }
 
@@ -503,31 +505,15 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       target_call_number: 0,
       test_timeout_seconds: 0,
       thread_count: 0,
+      target_thread_lid: 0,
     },
-    None,
   )
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TestingMode {
-  Testing,
-  MTCompatTesting,
-}
-
-#[derive(Debug)]
-pub struct TestParams {
-  pub test_count: u32,
-  pub target_call_number: u32,
-  pub timeout: Duration,
-  pub mode: TestingMode,
 }
 
 pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   infra: InfraParams,
-  fn_uid: NumFunUid,
-  params: TestParams,
-  thread_counters: Option<&Vec<u64>>,
+  test: &TestRegisryItem,
 ) -> Result<()> {
   send_metadata(
     chnl,
@@ -535,30 +521,31 @@ pub fn send_test_metadata(
       buff_count: infra.buff_count,
       buff_len: infra.buff_len,
       total_len: infra.buff_count * infra.buff_len,
-      mode: match params.mode {
+      mode: match test.mode {
         TestingMode::Testing => 2,
         TestingMode::MTCompatTesting => 3,
       },
-      target_fnid: *fn_uid.function_id,
-      target_modid: *fn_uid.module_id,
+      target_fnid: *test.uid.function_id,
+      target_modid: *test.uid.module_id,
       forked: 0,
-      test_count: params.test_count,
-      target_call_number: params.target_call_number,
-      test_timeout_seconds: params.timeout.as_secs() as u16,
-      thread_count: thread_counters.map_or(0u32, |v| v.len() as u32),
+      test_count: match test.mode {
+        TestingMode::Testing => test.test_count,
+        // in compat testing, testcount is always 1 and is re-used
+        // for the packet index
+        TestingMode::MTCompatTesting => test.packet_index.0 as u32,
+      },
+      target_call_number: test.target_call_number(),
+      test_timeout_seconds: test.test_timeout_s(),
+      thread_count: test.thread_count,
+      target_thread_lid: test.thread_lid.0,
     },
-    thread_counters,
   )
 }
 
 // sends the communication/testing parameters to the hooklib
-fn send_metadata(
-  meta_pub: &mut MetadataPublisher,
-  target_descriptor: ShmMeta,
-  thread_counters: Option<&Vec<u64>>,
-) -> Result<()> {
+fn send_metadata(meta_pub: &mut MetadataPublisher, target_descriptor: ShmMeta) -> Result<()> {
   Log::get("send_metadata").info("Waiting for a cooperating program");
-  meta_pub.publish(target_descriptor, thread_counters)
+  meta_pub.publish(target_descriptor)
 }
 
 // do not derive clone/copy or define functions with similar semantics
@@ -574,18 +561,23 @@ impl MetadataPublisher {
   // a "data_rdy" semaphore that signals that the metadata is ready to be read
   // a "data_ack" semaphore that indicates that the data has been read and can be rewritten/discarded
 
-  pub fn new(
-    mem_path: &CStr,
-    size_mem_path: &CStr,
-    data_sem_path: &str,
-    ack_sem_path: &str,
-    thread_ids: Option<&Vec<u64>>,
-  ) -> Result<Self> {
+  fn mk_sems(rdy_sem_path: &str, ack_sem_path: &str) -> Result<(Semaphore, Semaphore)> {
     // initialize ready semaphore to zero as no data is ready
-    let data = Semaphore::try_open_exclusive(data_sem_path, 0)?;
+    let rdy = Semaphore::try_open_exclusive(rdy_sem_path, 0)?;
     // !! ack semaphore is initialized to ONE - this will be waited on in the first call of
     // Self::publish
     let ack = Semaphore::try_open_exclusive(ack_sem_path, 1)?;
+    Ok((rdy, ack))
+  }
+
+  pub fn new(
+    mem_path: &CStr,
+    size_mem_path: &CStr,
+    rdy_sem_path: &str,
+    ack_sem_path: &str,
+    thread_ids: Option<Vec<u64>>,
+  ) -> Result<Self> {
+    let (rdy, ack) = Self::mk_sems(rdy_sem_path, ack_sem_path)?;
 
     // allocate sizeof(shmemHandle) + (size of the thread_ids data)
     let to_alloc = std::mem::size_of::<ShmMeta>() as u32
@@ -602,33 +594,50 @@ impl MetadataPublisher {
     Ok(Self {
       size_shm,
       shm,
-      data_rdy_sem: data,
+      data_rdy_sem: rdy,
       data_ack_sem: ack,
     })
   }
 
-  pub fn publish(&mut self, meta: ShmMeta, thread_ids: Option<&Vec<u64>>) -> Result<()> {
-    self.data_ack_sem.try_wait()?;
+  /// refreshes internals of the publisher so as to properly handle cases when
+  /// a faulty test case times out or terminates
+  /// 
+  /// Note that this especially applies in the MT compat mode 
+  pub fn re_new(&mut self) -> Result<()> {
+    let rdy_sem_path = self.data_rdy_sem.cname().clone();
+    let ack_sem_path = self.data_ack_sem.cname().clone();
+
+    // hack because try_destroy takes ownership
+    let mut tmp_rdy = Semaphore::Closed {
+      cname: "".to_owned(),
+    };
+    let mut tmp_ack = Semaphore::Closed {
+      cname: "".to_owned(),
+    };
+    std::mem::swap(&mut tmp_rdy, &mut self.data_rdy_sem);
+    std::mem::swap(&mut tmp_ack, &mut self.data_ack_sem);
+    tmp_rdy.try_destroy().map_err(|e| anyhow!(e.1))?;
+    tmp_ack.try_destroy().map_err(|e| anyhow!(e.1))?;
+
+    let (rdy, ack) = Self::mk_sems(&rdy_sem_path, &ack_sem_path)?;
+    self.data_rdy_sem = rdy;
+    self.data_ack_sem = ack;
+    Ok(())
+  }
+
+  pub fn publish(&mut self, meta: ShmMeta) -> Result<()> {
+    if !self.data_ack_sem.try_wait(Some(5))? {
+      bail!("Publish timed out");
+    }
 
     {
-      Log::get("MetadataPublisher::publish").trace(format!(
-        "Thread Count {} vs real {thread_ids:?}",
-        meta.thread_count
-      ));
+      Log::get("MetadataPublisher::publish").trace(format!("Thread Count {}", meta.thread_count));
 
       let mem = self.shm.borrow_ptr_mut()?;
-      let mut tmp_mem = *mem;
       unsafe {
         // SAFETY: allocation of self.shm (mainly the size)
         // unaligned write just to be sure
-        (tmp_mem as *mut ShmMeta).write_unaligned(meta);
-        tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<ShmMeta>() as isize);
-        if let Some(ids) = thread_ids {
-          for v in ids {
-            (tmp_mem as *mut u64).write_unaligned(*v);
-            tmp_mem = tmp_mem.byte_offset(std::mem::size_of::<u64>() as isize);
-          }
-        }
+        (*mem as *mut ShmMeta).write_unaligned(meta);
       }
     }
     self.data_rdy_sem.try_post()

@@ -80,10 +80,12 @@ static bool populate_static_metadata(const void *source, uint32_t size) {
     std::println("Thread count: {} {} {}", s_buff_info.thread_count, expected,
                  size);
   }
-  const auto *arr = reinterpret_cast<const uint64_t *>(
-      static_cast<const ShmMeta *>(source) + 1);
   for (uint32_t i = 0; i < expected; ++i) {
-    s_thread_counts.push_back(arr[i]);
+    if (i == s_buff_info.target_thread_lid) {
+      s_thread_counts.push_back(s_buff_info.target_call_number);
+    } else {
+      s_thread_counts.push_back(0);
+    }
   }
   return true;
 }
@@ -97,15 +99,9 @@ static bool get_buffer_info() {
 thread_local std::optional<uint32_t> t_logical_id = std::nullopt;
 
 // obtains a new logical thread ID for the thread
-uint32_t get_new_logical_id() {
+static uint32_t get_new_logical_id() {
   static std::atomic<uint32_t> auto_increment{0};
-  auto cpy = auto_increment.load();
-  auto to_store = cpy + 1;
-  while (!auto_increment.compare_exchange_strong(
-      cpy, to_store, std::memory_order_seq_cst, std::memory_order_seq_cst)) {
-    cpy = auto_increment.load();
-    to_store = cpy + 1;
-  };
+  auto cpy = auto_increment.fetch_add(1);
   if constexpr (DBG) {
     std::println("Thread ID {} mapped to logical ID {}",
                  std::this_thread::get_id(), cpy);
@@ -123,17 +119,11 @@ public:
       : m_counts(std::move(counts)) {}
 
   void register_call() {
-    if (!t_logical_id.has_value()) {
-      if constexpr (DBG) {
-        std::println("Registering call for {}", std::this_thread::get_id());
-      }
-      t_logical_id = get_new_logical_id();
-    } else {
-      if constexpr (DBG) {
-        std::println("Registering call for {}", *t_logical_id);
-      }
+    auto logId = ensure_logical_id();
+    ;
+    if constexpr (DBG) {
+      std::println("Registering call for {}", logId);
     }
-    auto logId = *t_logical_id;
 
     if (logId >= m_counts.size()) {
       std::println(std::cerr, "Thread ID of unexpected value {} - size: {}",
@@ -141,7 +131,7 @@ public:
       std::quick_exit(ID_FAILURE);
     }
 
-    if (m_counts[logId] > 0) {
+    if (logId == s_buff_info.target_thread_lid && m_counts[logId] > 0) {
       if constexpr (DBG) {
         std::println("Registered {} @ {}", logId, m_counts[logId]);
       }
@@ -153,34 +143,33 @@ public:
   }
 
   uint32_t get_call_num() {
-    if (!t_logical_id) {
-      std::println(std::cerr,
-                   "get_call_num expects the logical ID to be assigned");
-      std::quick_exit(ID_FAILURE);
-    }
+    auto id = ensure_logical_id();
     return static_cast<uint32_t>(s_buff_info.target_call_number + 1 -
-                                 m_counts[*t_logical_id]);
+                                 m_counts[id]);
   }
 
   void disable_hijacking() {
-    if (!t_logical_id) {
-      std::println(std::cerr,
-                   "disable_hijacking expects the logical ID to be assigned");
-      std::quick_exit(ID_FAILURE);
-    }
-    m_counts[*t_logical_id] = 0;
+    auto id = ensure_logical_id();
+    m_counts[id] = 0;
   }
 
-  bool should_hijack_arg() {
-    // TODO make this "ensure_has_logical_id"
+  static uint64_t ensure_logical_id() {
     if (!t_logical_id.has_value()) {
       if constexpr (DBG) {
         std::println("Registering call for {}", std::this_thread::get_id());
       }
       t_logical_id = get_new_logical_id();
     }
+    return *t_logical_id;
+  }
 
-    return m_counts[*t_logical_id] == 1;
+  bool should_hijack_arg() {
+    auto id = ensure_logical_id();
+    return is_lid_tested() && m_counts[id] == 1;
+  }
+
+  static bool is_lid_tested() {
+    return ensure_logical_id() == s_buff_info.target_thread_lid;
   }
 };
 
@@ -320,9 +309,13 @@ bool should_hijack_arg(void) {
                              : s_call_countdown == 1;
 }
 
+static bool is_thread_under_test() {
+  return !mt_compat_testing() || CallCounter::is_lid_tested();
+}
+
 bool is_fn_under_test(uint32_t mod, uint32_t fn) {
   return in_testing_mode() && s_buff_info.target_modid == mod &&
-         s_buff_info.target_fnid == fn;
+         s_buff_info.target_fnid == fn && is_thread_under_test();
 }
 
 // local argument packet storage
@@ -337,14 +330,14 @@ bool locally_initialize_arg_packet(void *owning_packet, int packet_size) {
   return true;
 }
 
-#define PAYLOAD_T uint64_t
+using PacketIdxT = uint64_t;
 
 // parent socket
 static int s_socket_fd = -1;
 // packet index that will be replacing the arguments of the desired call
-static PAYLOAD_T s_packet_idx = 0;
+static PacketIdxT s_packet_idx = 0;
 
-void init_packet_socket(int fd, PAYLOAD_T request_idx) {
+void init_packet_socket(int fd, PacketIdxT request_idx) {
   s_socket_fd = fd;
   s_packet_idx = request_idx;
 }
@@ -388,7 +381,7 @@ const llcaproto::SingleArgVariant *get_next_arg() {
 }
 
 bool send_test_pass_to_monitor(bool exception) {
-  PAYLOAD_T payload = exception ? HOOKLIB_TESTEXC_VAL : HOOKLIB_TESTPASS_VAL;
+  PacketIdxT payload = exception ? HOOKLIB_TESTEXC_VAL : HOOKLIB_TESTPASS_VAL;
   static_assert(sizeof(s_packet_idx) == sizeof(payload), "sanity check");
 
   return write(s_socket_fd, &payload, sizeof(payload)) == sizeof(payload);

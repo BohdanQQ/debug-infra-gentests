@@ -2,7 +2,6 @@
 #include <unistd.h>
 
 int test_target(int i, float f) {
-  sleep(1);
   printf("Returning %d\n", (int)(i*f));
   fflush(stdout);
   return i * f;

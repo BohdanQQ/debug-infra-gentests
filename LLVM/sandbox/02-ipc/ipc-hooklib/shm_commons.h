@@ -36,6 +36,8 @@ typedef struct {
   unsigned short test_timeout_seconds;
   // number of items in the thread-counting list
   unsigned int thread_count;
+  // logical ID of the thread to be tested
+  unsigned int target_thread_lid;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 

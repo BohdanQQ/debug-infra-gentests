@@ -207,7 +207,7 @@ impl LogStrategy {
     self
       .put_str_format(
         "{ \"results\":\n[",
-        "Module ID | Function ID |  Call  | Packet | Result",
+        " TID | Module ID | Function ID |  Call  | Packet | Result",
       )
       .await?;
     Ok(())

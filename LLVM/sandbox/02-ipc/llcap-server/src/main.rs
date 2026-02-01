@@ -37,9 +37,10 @@ use crate::{
     common::{
       CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
     },
+    test_registry::{TestRegisryItem, TestRegistry},
     testing::{
-      CallIndexT, ForkingTestJobParams, LogResult, MultithreadTestJobParams, PacketIndexT,
-      TestGenerator, TestJobFailure, TestOutputPathGen, TestStatus,
+      CallIndexT, LogResult, PacketIndexT, TestJobFailure, TestOutputPathGen, ThreadLidT,
+      singular_test_job,
     },
   },
 };
@@ -48,7 +49,7 @@ use crate::{
 
 fn create_meta_svr(
   params: &CommonStageParams,
-  thread_counters: Option<&Vec<u64>>,
+  thread_counters: Option<Vec<u64>>,
 ) -> Result<Arc<Mutex<MetadataPublisher>>> {
   let (data_name, size_name) = params.shmem_path_cstr()?;
   Ok(Arc::new(Mutex::new(
@@ -72,10 +73,9 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
 
 #[tokio::main()]
 async fn main() -> Result<()> {
-  const LOGGER_NAME: &str = "main";
-  let lg = Log::get(LOGGER_NAME);
   let cli = Cli::try_parse()?;
   Log::set_verbosity(cli.verbose);
+  let lg = Log::get("main");
   lg.progress(format!("Verbosity: {}", cli.verbose));
 
   if cli.cleanup {
@@ -256,8 +256,7 @@ async fn main() -> Result<()> {
         Ok(Err(e)) => bail!("server ready error: {}", e),
       }
 
-      let mut futs = vec![];
-      let metadata_svr = create_meta_svr(&common_params, Some(&thread_counts))?;
+      let metadata_svr = create_meta_svr(&common_params, Some(thread_counts.clone()))?;
       let mut errors = vec![];
       let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
       let test_case_timeout = Duration::from_secs(timeout as u64);
@@ -281,67 +280,114 @@ async fn main() -> Result<()> {
             continue;
           }
 
-          let fn_uid = NumFunUid {
-            function_id: *function,
-            module_id: *module,
-          };
-          lg.progress(format!("Run program for fn {fn_uid:?}"));
-
-          if mt_support {
-            // TODO: thread loop
-            for test_index in 0..test_count {
-              let test_job = MultithreadTestJobParams {
-                fn_uid,
-                test_case_timeout,
-                test_count,
-                job_timeout: global_timeout,
-                command: command.clone(),
-                thread_counters: thread_counts.clone(),
-              }
-              .into_job(
-                metadata_svr.clone(),
-                common_params.infra,
-                output_gen.clone(),
-              );
-
-              for res in test_job.await? {
-                match res {
-                  Err(e) => errors.push(e),
-                  Ok(v) => results.lock().unwrap().push(LogResult {
-                    uid: fn_uid,
-                    call: CallIndexT(test_index + 1),
-                    pkt: PacketIndexT(test_count as u64),
-                    status: v,
-                  }),
+          let mut test_reg = TestRegistry::new();
+          let mut tests = vec![];
+          let _test_reg = if mt_support {
+            for (thread_idx, call_count) in thread_counts.iter().enumerate() {
+              for call_index in 0..*call_count {
+                for packet_index in 0..test_count {
+                  let thread_idx = thread_idx as u32;
+                  tests.push(test_reg.add_new_test(
+                    TestRegisryItem {
+                      uid,
+                      call_index: CallIndexT(call_index as u32),
+                      packet_index: PacketIndexT(packet_index as u64),
+                      thread_lid: ThreadLidT(thread_idx),
+                      thread_count: thread_counts.len() as u32,
+                      test_count,
+                      timeout_test: test_case_timeout,
+                      timeout_process: Some(test_case_timeout),
+                      mode: stages::test_registry::TestingMode::MTCompatTesting,
+                    },
+                    &command,
+                  ));
                 }
               }
             }
-          } else {
-            let test_job = ForkingTestJobParams {
-              fn_uid,
-              test_count,
-              test_case_timeout,
-              job_timeout: global_timeout,
-              command: command.clone(),
-            }
-            .into_job(
-              metadata_svr.clone(),
-              common_params.infra,
-              output_gen.clone(),
-            );
-            futs.push(test_job);
-          }
-        }
-      }
-      lg.progress("Waiting for jobs to finish...");
-      for fut in futs {
-        for r in fut.await? {
-          if let Err(e) = r {
-            errors.push(e);
-          }
-        }
-      }
 
+            let test_reg = Arc::new(test_reg);
+            for test in tests {
+              let (tst, cmd) = test_reg
+                .get_test_params(test)
+                .ok_or(anyhow!("Inconsistent test registry"))?;
+              let test_job = singular_test_job(
+                metadata_svr.clone(),
+                common_params.infra,
+                tst,
+                cmd,
+                output_gen.clone(),
+              );
+
+              match test_job.await {
+                Err(e) => errors.push(e),
+                Ok(status) => results.lock().unwrap().push(LogResult::from_test(
+                  test_reg.get_test_params(test).unwrap().0,
+                  // maps GlobalTimeout to just Timeout - in the MT compat testing, we don't distinguish those
+                  if matches!(status, stages::testing::TestStatus::GlobalTimeout) {
+                    stages::testing::TestStatus::Timeout
+                  } else {
+                    status
+                  },
+                )),
+              }
+            }
+            test_reg.clone()
+          } else {
+            let mut tests = vec![];
+            for call_idx in 0..test_count {
+              tests.push(test_reg.add_new_test(
+                TestRegisryItem {
+                  uid,
+                  call_index: CallIndexT(call_idx),
+                  packet_index: PacketIndexT(0_u64),
+                  thread_lid: ThreadLidT(0_u32),
+                  thread_count: thread_counts.len() as u32,
+                  test_count,
+                  timeout_test: test_case_timeout,
+                  timeout_process: global_timeout,
+                  mode: stages::test_registry::TestingMode::Testing,
+                },
+                &command,
+              ));
+            }
+
+            let test_reg = Arc::new(test_reg);
+            for test in tests {
+              let (tst, cmd) = test_reg
+                .get_test_params(test)
+                .ok_or(anyhow!("Inconsistent test registry"))?;
+              lg.trace(format!("Start test {tst:?}"));
+
+              let test_job = singular_test_job(
+                metadata_svr.clone(),
+                common_params.infra,
+                tst,
+                cmd,
+                output_gen.clone(),
+              );
+
+              match test_job.await {
+                Err(e) => errors.push(e),
+                Ok(status)
+                  if matches!(
+                    status,
+                    stages::testing::TestStatus::GlobalTimeout
+                      | stages::testing::TestStatus::Spurious(_)
+                      | stages::testing::TestStatus::Fatal(_)
+                  ) =>
+                {
+                  results.lock().unwrap().push(LogResult::from_test(
+                    test_reg.get_test_params(test).unwrap().0,
+                    status,
+                  ))
+                }
+                _ => {}
+              }
+            }
+            test_reg.clone()
+          };
+        }
+      }
       lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
@@ -394,29 +440,11 @@ async fn report_results(
   results.sort_by(|a, b| a.uid.function_id.cmp(&b.uid.function_id));
   results.sort_by(|a, b| a.uid.module_id.cmp(&b.uid.module_id));
   for result in results.iter() {
-    // skip errors - prefer outputs
+    // skip I/O errors - prefer outputs
     let _ = lg.result(result).await;
   }
   for error in errors {
-    let uid = match error.params {
-      stages::testing::AnyTestJobParam::F(forking_test_job_params) => {
-        forking_test_job_params.fn_uid
-      }
-      stages::testing::AnyTestJobParam::M(multithread_test_job_params) => {
-        multithread_test_job_params.fn_uid
-      }
-    };
-    let _ = lg
-      .result(&LogResult {
-        uid,
-        call: stages::testing::CallIndexT(error.call_number),
-        pkt: stages::testing::PacketIndexT(0),
-        status: match error.status {
-          Some(st) => st,
-          None => TestStatus::Fatal(error.message),
-        },
-      })
-      .await;
+    let _ = lg.result(&error.log_res).await;
   }
   lg.finish().await?;
   Ok(())

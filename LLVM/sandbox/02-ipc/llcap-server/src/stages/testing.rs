@@ -16,7 +16,6 @@ use tokio::{
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
   process::{Child, Command},
   sync::oneshot::{Receiver, Sender},
-  task::JoinHandle,
   time::{sleep, timeout},
 };
 
@@ -24,17 +23,30 @@ use crate::{
   args::PacketInspecSpec,
   log::{IntoLogString, Log, LogStrategy},
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
-  shmem_capture::{MetadataPublisher, TestParams, hooklib_commons::*, send_test_metadata},
-  stages::{arg_capture::PacketReader, common::*},
+  shmem_capture::{MetadataPublisher, hooklib_commons::*, send_test_metadata},
+  stages::{arg_capture::PacketReader, common::*, test_registry::TestRegisryItem},
 };
 
 use super::arg_capture::PacketProvider;
 
 pub struct LogResult {
-  pub uid: NumFunUid,
   pub call: CallIndexT,
+  pub uid: NumFunUid,
   pub pkt: PacketIndexT,
+  pub thread_lid: ThreadLidT,
   pub status: TestStatus,
+}
+
+impl LogResult {
+  pub fn from_test(t: &TestRegisryItem, status: TestStatus) -> Self {
+    Self {
+      call: CallIndexT(t.call_index.0 + 1),
+      uid: t.uid,
+      pkt: t.packet_index,
+      thread_lid: t.thread_lid,
+      status,
+    }
+  }
 }
 
 impl IntoLogString for LogResult {
@@ -44,14 +56,16 @@ impl IntoLogString for LogResult {
       uid,
       pkt,
       status,
+      thread_lid,
     } = self;
     match log_strat {
       LogStrategy::StdOut | LogStrategy::PlainText(_) => format!(
-        "{:^10}|{:^13}|{:^8}|{:^8}| {status:?}",
+        "{:^5}|{:^11}|{:^13}|{:^8}|{:^8}|{status:?}",
+        thread_lid.0,
         uid.module_id.hex_string(),
         uid.function_id.hex_string(),
         call.0,
-        pkt.0
+        pkt.0,
       ),
       LogStrategy::Json {
         file: _,
@@ -79,10 +93,9 @@ impl IntoLogString for LogResult {
         };
 
         format!(
-          "{}\n\t{{\n\t\t\"module_id\":\"{}\",\n\t\t\"function_id\":\"{}\",\n\t\t\"call_n\":{},\n\t\t\"packet_idx\":{}{}\n\t\t\"status\":\"{:?}\"\n\t}}",
+          "{}\n\t{{\n\t\t\"thread_id\":\"{}\",\n\t\t\"module_id\":\"{module_id}\",\n\t\t\"function_id\":\"{fn_id}\",\n\t\t\"call_n\":{},\n\t\t\"packet_idx\":{}{}\n\t\t\"status\":\"{status:?}\"\n\t}}",
           if *first { "" } else { "," },
-          module_id,
-          fn_id,
+          thread_lid.0,
           call.0,
           pkt.0,
           if let Some(hex) = packet_hex {
@@ -90,7 +103,6 @@ impl IntoLogString for LogResult {
           } else {
             ",".to_owned()
           },
-          status
         )
       }
     }
@@ -178,6 +190,8 @@ pub async fn test_server_job(
 pub struct CallIndexT(pub u32);
 #[derive(Debug, Clone, Copy)]
 pub struct PacketIndexT(pub u64);
+#[derive(Debug, Clone, Copy)]
+pub struct ThreadLidT(pub u32);
 #[derive(Debug, Clone)]
 /// message received from the test client (test coordinator)
 enum TestMessage {
@@ -196,6 +210,7 @@ pub enum TestStatus {
   Pass,
   Exception,
   Timeout,
+  GlobalTimeout,
   #[allow(dead_code)] // used by Debug
   Exit(i32),
   #[allow(dead_code)]
@@ -451,6 +466,7 @@ fn handle_client_msg(
           call: call_idx,
           pkt: test_index,
           status,
+          thread_lid: ThreadLidT(0),
         });
         Ok((state, None))
       }
@@ -504,301 +520,112 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
   raw_send_to_client(write_stream, response).await
 }
 
-#[derive(Clone, Debug)]
-pub struct ForkingTestJobParams {
-  pub fn_uid: NumFunUid,
-  pub test_count: u32,
-  pub test_case_timeout: Duration,
-  pub job_timeout: Option<Duration>,
-  pub command: Arc<Vec<String>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct MultithreadTestJobParams {
-  // we test cases as the processes in this mode
-  pub fn_uid: NumFunUid,
-  pub test_count: u32,
-  pub test_case_timeout: Duration,
-  pub job_timeout: Option<Duration>,
-  pub command: Arc<Vec<String>>,
-  pub thread_counters: Vec<u64>,
-}
-
-pub enum AnyTestJobParam {
-  F(ForkingTestJobParams),
-  M(MultithreadTestJobParams),
-}
-
-pub trait TestGenerator
-where
-  Self: Clone,
-{
-  fn into_job(
-    self,
-    svr: Arc<Mutex<MetadataPublisher>>,
-    infra_params: InfraParams,
-    output_gen: Arc<Option<TestOutputPathGen>>,
-  ) -> JoinHandle<Vec<Result<TestStatus, TestJobFailure>>>;
-  fn test_params(&self, call_idx: u32) -> TestParams;
-  fn command(&self) -> &Arc<Vec<String>>;
-  /// gets the timeout of the entire test process (including setup)
-  fn process_timeout(&self) -> Option<Duration>;
-  /// indicates whether children of the test process should be killed
-  /// ### Notes:
-  /// The non-forking testing approach uses the child of the test process
-  /// to handle the coordinator side of the comms
-  /// Killing the coordinator would look like the test catastrophically failed
-  /// on the llcap-server's side
-  fn kill_children(&self) -> bool;
-  fn into_any(self) -> AnyTestJobParam;
-  fn thread_counts(&self) -> Option<&Vec<u64>>;
-}
-
-impl TestGenerator for ForkingTestJobParams {
-  fn test_params(&self, call_idx: u32) -> TestParams {
-    TestParams {
-      target_call_number: call_idx + 1,
-      timeout: self.test_case_timeout,
-      test_count: self.test_count,
-      mode: crate::shmem_capture::TestingMode::Testing,
-    }
-  }
-
-  fn command(&self) -> &Arc<Vec<String>> {
-    &self.command
-  }
-
-  fn process_timeout(&self) -> Option<Duration> {
-    self.job_timeout
-  }
-
-  fn into_any(self) -> AnyTestJobParam {
-    AnyTestJobParam::F(self)
-  }
-
-  fn into_job(
-    self,
-    svr: Arc<Mutex<MetadataPublisher>>,
-    infra_params: InfraParams,
-    output_gen: Arc<Option<TestOutputPathGen>>,
-  ) -> JoinHandle<Vec<Result<TestStatus, TestJobFailure>>> {
-    tokio::spawn(forking_test_job(svr, infra_params, self, output_gen))
-  }
-
-  fn kill_children(&self) -> bool {
-    true
-  }
-
-  fn thread_counts(&self) -> Option<&Vec<u64>> {
-    None
-  }
-}
-
-impl TestGenerator for MultithreadTestJobParams {
-  fn test_params(&self, call_idx: u32) -> TestParams {
-    TestParams {
-      target_call_number: call_idx + 1,
-      timeout: self.test_case_timeout,
-      test_count: call_idx,
-      mode: crate::shmem_capture::TestingMode::MTCompatTesting,
-    }
-  }
-
-  fn command(&self) -> &Arc<Vec<String>> {
-    &self.command
-  }
-
-  fn process_timeout(&self) -> Option<Duration> {
-    self.job_timeout
-  }
-  fn into_any(self) -> AnyTestJobParam {
-    AnyTestJobParam::M(self)
-  }
-
-  fn into_job(
-    self,
-    svr: Arc<Mutex<MetadataPublisher>>,
-    infra_params: InfraParams,
-    output_gen: Arc<Option<TestOutputPathGen>>,
-  ) -> JoinHandle<Vec<Result<TestStatus, TestJobFailure>>> {
-    tokio::spawn(multithread_test_job(svr, infra_params, self, output_gen))
-  }
-
-  fn kill_children(&self) -> bool {
-    false
-  }
-
-  fn thread_counts(&self) -> Option<&Vec<u64>> {
-    Some(&self.thread_counters)
-  }
-}
-
 pub struct TestJobFailure {
-  pub params: AnyTestJobParam,
-  pub call_number: u32,
-  pub message: String,
-  pub status: Option<TestStatus>,
+  pub log_res: LogResult,
 }
 
-async fn singular_test_job(
+impl TestJobFailure {
+  pub fn from_test(t: &TestRegisryItem, message: String, status: Option<TestStatus>) -> Self {
+    Self {
+      log_res: LogResult::from_test(t, status.unwrap_or(TestStatus::Fatal(message.clone()))),
+    }
+  }
+}
+
+pub async fn singular_test_job(
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
   infra_params: InfraParams,
-  generator: impl TestGenerator + Debug,
-  call_idx: u32,
-  call_n: u32,
-  fn_uid: NumFunUid,
+  test: &TestRegisryItem,
+  cmdline: &[String],
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<TestStatus, TestJobFailure> {
-  let (m, f) = (fn_uid.module_id, fn_uid.function_id);
+  let (m, f) = (test.uid.module_id, test.uid.function_id);
+  let packet_idx = test.packet_index;
   // lambda transforming the test errors to proper return values
-  let mk_error = |error: anyhow::Error| TestJobFailure {
-    params: generator.clone().into_any(),
-    call_number: call_n,
-    message: error.to_string(),
-    status: None,
+  let mk_error = |error: anyhow::Error, status: TestStatus| {
+    TestJobFailure::from_test(test, error.to_string(), Some(status))
   };
-  // prepare job parameters
-  let job_params = generator.clone();
-  {
-    let mut guard = metadata_svr.lock().unwrap();
-    send_test_metadata(
-      guard.deref_mut(),
-      infra_params,
-      NumFunUid {
-        function_id: f,
-        module_id: m,
-      },
-      job_params.test_params(call_idx),
-      job_params.thread_counts(),
-    )
-    .map_err(mk_error)?;
-  }
   let lg = Log::get("singular_test_job");
-  lg.trace(format!("params: {job_params:?}"));
+  // prepare job parameters
+  {
+    lg.trace(format!("Test: {test:?}"));
+
+    let mut guard = metadata_svr.lock().unwrap();
+    guard.re_new().map_err(|v| {
+      TestJobFailure::from_test(
+        test,
+        v.to_string(),
+        TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
+      )
+    })?;
+
+    send_test_metadata(guard.deref_mut(), infra_params, test)
+      .map_err(|e| mk_error(e, TestStatus::Timeout))?;
+  }
   // prepare the "command", mainly the std out/err
-  let mut cmd = cmd_from_args(job_params.command()).map_err(mk_error)?;
+  let mut cmd = cmd_from_args(cmdline)
+    .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
   if let Some(output_gen) = output_gen.as_ref() {
-    let out_path = output_gen.get_out_path(m, f, call_n);
-    let err_path = output_gen.get_err_path(m, f, call_n);
-    cmd.stdout(Stdio::from(
-      File::create(out_path.clone())
-        .map_err(|e| anyhow!("Stdout file creation failed: {e} {out_path:?}"))
-        .map_err(mk_error)?,
-    ));
-    cmd.stderr(Stdio::from(
-      File::create(err_path)
-        .map_err(|e| anyhow!("Stderr file creation failed {e} {out_path:?}"))
-        .map_err(mk_error)?,
-    ));
+    let id = format!("c{}-i{}", test.target_call_number(), packet_idx.0);
+    let out_path = output_gen.get_out_path(m, f, &id);
+    let err_path = output_gen.get_err_path(m, f, &id);
+    cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
+      |e| {
+        mk_error(
+          anyhow!("Stdout file creation failed: {e} {out_path:?}"),
+          TestStatus::Fatal("Stdout create".to_owned()),
+        )
+      },
+    )?));
+    cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
+      mk_error(
+        anyhow!("Stderr file creation failed {e} {out_path:?}"),
+        TestStatus::Fatal("Stderr create".to_owned()),
+      )
+    })?));
   }
   // launch the test
-  let test = cmd
-    .spawn()
-    .map_err(|e| anyhow!("spawn from command: {e}"))
-    .map_err(mk_error)?;
+  let test_process = cmd.spawn().map_err(|e| {
+    mk_error(
+      anyhow!("spawn from command: {e}"),
+      TestStatus::Fatal("Spawn".to_owned()),
+    )
+  })?;
 
-  lg.progress(format!("PID of the program under test: {:?}", test.id()));
+  lg.progress(format!(
+    "PID of the program under test: {:?}",
+    test_process.id()
+  ));
 
-  let result = wait_or_terminate(test, job_params.clone(), fn_uid, call_idx).await;
+  let result = wait_or_terminate(test_process, test).await;
 
   sleep(Duration::from_millis(300)).await;
   lg.trace(format!("final status: {result:?}"));
-  let v = match result {
-    Ok(st) => st,
-    Err(e) => Err(mk_error(e))?,
-  };
 
-  match &v {
-    TestStatus::Fatal(m) | TestStatus::Spurious(m) => Err(TestJobFailure {
-      call_number: call_n,
-      params: job_params.into_any(),
-      message: m.clone(),
-      status: Some(v),
-    }),
-    _ => Ok(v),
+  match &result {
+    TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
+      Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
+    }
+    _ => Ok(result),
   }
-}
-
-// performs testing of all argument packets, launching the
-// target applicaiton once of reach argument packet
-async fn forking_test_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  infra_params: InfraParams,
-  job_params: ForkingTestJobParams,
-  output_gen: Arc<Option<TestOutputPathGen>>,
-) -> Vec<Result<TestStatus, TestJobFailure>> {
-  let mut result = vec![];
-  for call_idx in 0..job_params.test_count {
-    let uid = job_params.fn_uid;
-    let cloned_params = job_params.clone();
-    result.push(
-      singular_test_job(
-        metadata_svr.clone(),
-        infra_params,
-        cloned_params,
-        call_idx,
-        call_idx,
-        uid,
-        output_gen.clone(),
-      )
-      .await,
-    );
-  }
-  result
-}
-
-// performs testing of a single argument packet
-// on a single execution of the target application
-async fn multithread_test_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  infra_params: InfraParams,
-  job_params: MultithreadTestJobParams,
-  output_gen: Arc<Option<TestOutputPathGen>>,
-) -> Vec<Result<TestStatus, TestJobFailure>> {
-  let mut result = vec![];
-  for call_idx in 0..job_params.test_count {
-    let uid = job_params.fn_uid;
-    let cloned_params = job_params.clone();
-    result.push(
-      singular_test_job(
-        metadata_svr.clone(),
-        infra_params,
-        cloned_params,
-        call_idx,
-        call_idx + 1,
-        uid,
-        output_gen.clone(),
-      )
-      .await,
-    );
-  }
-
-  result
 }
 
 /// waits for or terminates the test instance (child process representing the entire test process) based on a timeout
-async fn wait_or_terminate(
-  mut test: Child,
-  job_params: impl TestGenerator,
-  id: NumFunUid,
-  call_idx: u32,
-) -> Result<TestStatus> {
+async fn wait_or_terminate(mut process: Child, test: &TestRegisryItem) -> TestStatus {
   let lg = Log::get("wait_or_terminate");
-  let job_timeout = job_params.process_timeout();
-  let kill_children = job_params.kill_children();
-  if let Some(timeout_duration) = job_timeout {
-    match tokio::time::timeout(timeout_duration, test.wait()).await {
+  let process_timeout = test.timeout_process;
+  let kill_children = test.terminate_child();
+  if let Some(timeout_duration) = process_timeout {
+    match tokio::time::timeout(timeout_duration, process.wait()).await {
       Err(_) => {
-        lg.crit(format!(
-          "Global timeout, killing child, test {id:?}@{call_idx:?}"
-        ));
+        lg.crit(format!("Global timeout, killing child, test {test:?}"));
         // this will most likely generate a redundant Timeout/Error test status
         // (we are killing children first, then the monitor)
 
         // but since we return error from here, there will also be a
         // "Fatal" test status wich should be detected
         // the clutter is okay, since this should not happen
-        if kill_children && let Some(pid) = test.id() {
+        if kill_children && let Some(pid) = process.id() {
           // kills the children of the tested app (forked by hooklib)
           let _ = Command::new("pkill")
             .args(["-P", &pid.to_string()])
@@ -807,28 +634,27 @@ async fn wait_or_terminate(
             .wait()
             .await;
         }
-        let _ = test.kill().await;
+        let _ = process.kill().await;
 
-        Err(anyhow!("Job timeout"))
+        TestStatus::GlobalTimeout
       }
-      Ok(status) => Ok(status.map_or_else(
+      Ok(status) => status.map_or_else(
         |e| TestStatus::Spurious(format!("I/O error in wait: {e:?}")),
         TestStatus::from,
-      )),
+      ),
     }
   } else {
     // we ignore "failures" here because if .wait() erred, there is not much we can do, if the
     // test child failed, it can be a perfectly desired result (no point reacting to it)
     // if the waiting failed, it will get logged
-    let res = test.wait().await.map_or_else(
+    process.wait().await.map_or_else(
       |e| {
-        let msg = format!("{id:?}@{call_idx:?} failed with error {e}");
+        let msg = format!("Test {test:?} failed with error {e}");
         lg.crit(&msg);
         TestStatus::Spurious(msg)
       },
       TestStatus::from,
-    );
-    Ok(res)
+    )
   }
 }
 
@@ -850,7 +676,7 @@ impl TestOutputPathGen {
     }
   }
 
-  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: &str) -> PathBuf {
     self.get_path(format!(
       "M{}-F{}-{}.out",
       m.hex_string(),
@@ -859,7 +685,7 @@ impl TestOutputPathGen {
     ))
   }
 
-  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: u32) -> PathBuf {
+  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: &str) -> PathBuf {
     self.get_path(format!(
       "M{}-F{}-{}.err",
       m.hex_string(),

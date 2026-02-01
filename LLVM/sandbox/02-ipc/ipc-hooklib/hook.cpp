@@ -58,7 +58,6 @@ static bool do_srv_send(const std::array<char, Sz> &message, const char *desc) {
   return true;
 }
 
-
 static bool connect_to_server(const char *path) {
   // https://beej.us/guide/bgipc/html/split/unixsock.html#unixsock
   struct sockaddr_un remote{.sun_family = AF_UNIX, .sun_path = ""};
@@ -425,7 +424,6 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     return;
   }
 
-
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     std::array<int, 2> sockets{0};
 
@@ -667,7 +665,6 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
       }
       /* is safe assuming the incoming messages are of correct order */
       *target = static_cast<NumT>(NestTrait::extract(*arg));
-      std::cerr << "Replaced " << n << " with " << *target;
     }
     return;
   }
