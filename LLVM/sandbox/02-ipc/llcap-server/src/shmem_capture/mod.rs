@@ -601,8 +601,8 @@ impl MetadataPublisher {
 
   /// refreshes internals of the publisher so as to properly handle cases when
   /// a faulty test case times out or terminates
-  /// 
-  /// Note that this especially applies in the MT compat mode 
+  ///
+  /// Note that this especially applies in the MT compat mode
   pub fn re_new(&mut self) -> Result<()> {
     let rdy_sem_path = self.data_rdy_sem.cname().clone();
     let ack_sem_path = self.data_ack_sem.cname().clone();
