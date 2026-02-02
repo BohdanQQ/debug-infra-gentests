@@ -537,7 +537,7 @@ pub fn send_test_metadata(
       target_call_number: test.target_call_number(),
       test_timeout_seconds: test.test_timeout_s(),
       thread_count: test.thread_count,
-      target_thread_lid: test.thread_lid.0,
+      target_thread_lid: test.thread_lid.0 as u32,
     },
   )
 }

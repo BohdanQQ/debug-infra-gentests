@@ -105,8 +105,6 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
   return true;
 }
 
-constexpr std::size_t MSG_SIZE{16};
-
 template <size_t OutSz, size_t InSz>
 static void copy_into_impl(Arr<char, OutSz> &target, size_t shift,
                            const std::array<char, InSz> &in) {
@@ -138,7 +136,7 @@ static Arr<char, OutSz> make_message(InS... vals) {
 }
 
 static bool send_start_msg(uint32_t mod, uint32_t fun, uint32_t call_idx) {
-  auto message = make_message<MSG_SIZE>(TAG_START, mod, fun, call_idx);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_START, mod, fun, call_idx);
   return do_srv_send(message, "msg start");
 }
 
@@ -156,7 +154,7 @@ static bool request_packet_from_server(uint64_t index, void **target,
                                        uint32_t *packet_size) {
   *target = NULL;
   *packet_size = 0;
-  auto message = make_message<MSG_SIZE>(TAG_PKT, index);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_PKT, index);
   if (!do_srv_send(message, "pktrq")) {
     return false;
   }
@@ -203,12 +201,12 @@ static uint16_t get_tag(EMsgEnd end_type) {
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
   uint16_t tag = get_tag(end_type);
-  auto message = make_message<MSG_SIZE>(TAG_TEST_END, index, tag, status);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_END, get_thread_lid(), index, tag, status);
   return do_srv_send(message, "test end msg");
 }
 
 static bool send_finish_message() {
-  auto message = make_message<MSG_SIZE>(TAG_TEST_FINISH);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_FINISH);
   return do_srv_send(message, "test finish msg");
 }
 

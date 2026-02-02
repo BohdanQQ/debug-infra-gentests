@@ -41,6 +41,8 @@ typedef struct {
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 
+static const unsigned long CLI_MSG_SIZE = 24;
+
 // message types the test coordinator sends to the llcap-server
 static const unsigned short TAG_START = 0;
 static const unsigned short TAG_PKT = 1;

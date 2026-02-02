@@ -77,17 +77,20 @@ function run-smoke-tests-with-buffers {
 
   run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
 
-  # testbin-* are directories where tests are run
-  # the numeric literal is the test timeout
+  # quick mt test with simple replacement and exceptions
+  run-test-in-directory-custom-buffers-mt "testbin-mt-exc-nohandle-norace" "test_target" 5 "$Size" "$Count"
+  run-test-in-directory-fn-end-instr-mt "testbin-mt-exc-norace" "test_target" 5 "$Size" "$Count"
+
+  # timeout tests
   run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
   run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
   
-  # test_target - the name of the tested function (see the sources of the tests)
+  # larger replacement
   run-test-in-directory-custom-buffers "testbin-arg-replacement-large" "test_target" 5 "$Size" "$Count"
 
+  # pure C examples
   run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
   
-  # pure C example
   run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
   run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
 
@@ -128,7 +131,7 @@ function run-detail-tests-with-buffers {
 # the defaults of the llcap-server
 DefaultLlcapBufSz="4194304" 
 DefaultLlcapBufCnt="10"
-SmallLlcapBufSz="16"
+SmallLlcapBufSz="24"
 
 run-smoke-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
 run-smoke-tests-with-buffers $SmallLlcapBufSz 2

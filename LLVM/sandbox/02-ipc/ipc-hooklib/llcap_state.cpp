@@ -109,6 +109,22 @@ static uint32_t get_new_logical_id() {
   return cpy;
 }
 
+static uint64_t ensure_logical_id() {
+  if (!t_logical_id.has_value()) {
+    if constexpr (DBG) {
+      std::println("Registering call for {}", std::this_thread::get_id());
+    }
+    t_logical_id = get_new_logical_id();
+  }
+  return *t_logical_id;
+}
+
+uint64_t get_thread_lid() {
+  auto id = ensure_logical_id();
+  return id;
+}
+
+
 // Encapsulates the querying over call counts in the multithreaded-support mode
 // only one global instance shall exist
 class CallCounter {
@@ -151,16 +167,6 @@ public:
   void disable_hijacking() {
     auto id = ensure_logical_id();
     m_counts[id] = 0;
-  }
-
-  static uint64_t ensure_logical_id() {
-    if (!t_logical_id.has_value()) {
-      if constexpr (DBG) {
-        std::println("Registering call for {}", std::this_thread::get_id());
-      }
-      t_logical_id = get_new_logical_id();
-    }
-    return *t_logical_id;
   }
 
   bool should_hijack_arg() {

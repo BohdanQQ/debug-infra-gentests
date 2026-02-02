@@ -96,6 +96,9 @@ bool mt_compat_testing(void);
 // initializes argument packet
 bool locally_initialize_arg_packet(void* owning_packet, int packet_size);
 
+// obtain the logical ID of this thread
+uint64_t get_thread_lid();
+
 #ifdef __cplusplus
 }
 #endif

@@ -37,10 +37,10 @@ use crate::{
     common::{
       CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
     },
-    test_registry::{TestRegisryItem, TestRegistry},
+    test_registry::{TestRegisryItem, TestRegistry, TestingMode},
     testing::{
-      CallIndexT, LogResult, PacketIndexT, TestJobFailure, TestOutputPathGen, ThreadLidT,
-      singular_test_job,
+      CallIndexT, LogResult, PacketIndexT, TestJobFailure, TestOutputPathGen, TestStatus,
+      ThreadLidT, singular_test_job,
     },
   },
 };
@@ -292,7 +292,7 @@ async fn main() -> Result<()> {
                       uid,
                       call_index: CallIndexT(call_index as u32),
                       packet_index: PacketIndexT(packet_index as u64),
-                      thread_lid: ThreadLidT(thread_idx),
+                      thread_lid: ThreadLidT(thread_idx as u64),
                       thread_count: thread_counts.len() as u32,
                       test_count,
                       timeout_test: test_case_timeout,
@@ -340,7 +340,7 @@ async fn main() -> Result<()> {
                   uid,
                   call_index: CallIndexT(call_idx),
                   packet_index: PacketIndexT(0_u64),
-                  thread_lid: ThreadLidT(0_u32),
+                  thread_lid: ThreadLidT(0_u64),
                   thread_count: thread_counts.len() as u32,
                   test_count,
                   timeout_test: test_case_timeout,
@@ -397,7 +397,7 @@ async fn main() -> Result<()> {
           Arc::try_unwrap(results);
         match rmx {
           Ok(val) => {
-            let mut unwrapped_res = val.into_inner()?;
+            let unwrapped_res = val.into_inner()?;
             let log_out = match report {
               None => LogStrategy::StdOut,
               Some(x) => {
@@ -412,7 +412,15 @@ async fn main() -> Result<()> {
                 .await?
               }
             };
-            report_results(log_out, &mut unwrapped_res, errors).await
+            let mut merged_results = merge_results(
+              if mt_support {
+                TestingMode::MTCompatTesting
+              } else {
+                TestingMode::Testing
+              },
+              unwrapped_res,
+            );
+            report_results(log_out, &mut merged_results, errors).await
           }
           Err(_) => Err(anyhow!("Failed to synchronize with the server")),
         }
@@ -427,6 +435,53 @@ async fn main() -> Result<()> {
   }
   lg.progress("Exiting...");
   Ok(())
+}
+
+// handles cases where 2 results are produced (one local, one asynchronous, especially in the MT-support mode)
+// we create a precedence of statuses, where the priority is thus:
+// Pass/Exception
+// Timeout
+// GlobalTimeout
+// Exit/Signal
+// Fatal
+// Spurious
+fn merge_results(_mode: TestingMode, results: Vec<LogResult>) -> Vec<LogResult> {
+  let status_prio = |st: &TestStatus| -> u8 {
+    match st {
+      TestStatus::Pass | TestStatus::Exception => 100,
+      TestStatus::Timeout => 95,
+      TestStatus::GlobalTimeout => 90,
+      TestStatus::Exit(_) => 85,
+      TestStatus::Signal(_) => 80,
+      TestStatus::Fatal(_) => 75,
+      TestStatus::Spurious(_) => 70,
+    }
+  };
+  let mut results = results
+    .into_iter()
+    .map(|v| (v, true))
+    .collect::<Vec<(LogResult, bool)>>();
+
+  let mut merged = vec![];
+  loop {
+    // remove all "marked as trash"
+    results.retain(|v| v.1);
+    if results.is_empty() {
+      return merged;
+    }
+    let res = results.first().cloned().unwrap().0;
+    let mut same_refs = results
+      .iter_mut()
+      .filter(|(v, _)| {
+        v.call == res.call && v.pkt == res.pkt && v.thread_lid == res.thread_lid && v.uid == res.uid
+      })
+      .collect::<Vec<&mut (LogResult, bool)>>();
+
+    same_refs.sort_by(|v1, v2| status_prio(&v1.0.status).cmp(&status_prio(&v2.0.status)));
+    same_refs.iter_mut().for_each(|x| x.1 = false);
+
+    merged.push(same_refs.last().unwrap().0.clone());
+  }
 }
 
 async fn report_results(
