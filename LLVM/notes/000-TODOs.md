@@ -36,9 +36,9 @@
 * try each combination (thread ID needed) of args/thread
     * ~~craft e2e test code~~
     * craft e2e test cases
-* tackle killing of a detached child process
-    * if parent dies and child remains, IMO llcap-server cannot reach the child process
-        * this is not handled explicitly by `llcap-server`, but by the `hooklib` (child detects parent's timeout -> exits)
+* ~~tackle killing of a detached child process~~
+    * ~~if parent dies and child remains, IMO llcap-server cannot reach the child process~~
+        * ~~this is not handled explicitly by `llcap-server`, but by the `hooklib` (child detects parent's timeout -> exits)~~
     * ~~also tackle the **wrong** `exit` calls~~
         * ~~exit in a child can cause parent to hang, etc.~~
         * ~~in child, always use `std:::quick_exit`~~

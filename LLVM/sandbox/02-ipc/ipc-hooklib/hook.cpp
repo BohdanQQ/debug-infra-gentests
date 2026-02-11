@@ -519,7 +519,6 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
     // should_hijack_arg becomes true as soon as the coutner updated above
     // indicates that we "should instrument this call"
     if (should_hijack_arg()) {
-      std::cerr << "TESTING" << std::endl;
       perform_testing(module_id, fn_id, get_call_num());
       // PARENT process never returns from the first call to instrumented
       // function CHILD process simply continues execution, should_hijack_arg is
@@ -626,6 +625,10 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
     hook_t<argt, storaget>(n, target, module, fn);                             \
   }
 
+// A simple debugging utility copied from StackOverflow
+// that creates a stringview of a type
+//
+// source: https://stackoverflow.com/questions/81870/is-it-possible-to-print-the-name-of-a-variables-type-in-standard-c
 template <class T> constexpr static std::string_view type_name() {
   using std::string_view;
 #ifdef __clang__
@@ -646,45 +649,49 @@ template <class T> constexpr static std::string_view type_name() {
 
 // NumT - numeric type for which we're creating the hook
 // StorageT - the type to be used to store the NumT inside a protobuf
+
+// extracts value from the protobuff message into the target poitner
+template <class NumT, class StorageT>
+  requires ConvertibleIsh<StorageT, NumT>
+static void hook_t_deserialize(NumT *target) {
+  const auto *arg = get_next_arg();
+  if (nullptr == arg) {
+    perror("hookt terr: size, capacity\n");
+    std::quick_exit(HOOKLIB_EC_PKT_RD);
+  }
+
+  // 1. check protobuf type
+  // 2. obtain the value from the protobuf
+  // 3. rewrite the target (hijack)
+  using NestTrait = ProtobufNestTrait<StorageT>;
+  if (!NestTrait::check(*arg)) {
+    perror("Serious error - unexpected argument type @ hook_t \n");
+    std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>()
+              << std::endl;
+    std::quick_exit(HOOKLIB_EC_TX_FIN);
+  }
+  /* is safe assuming the incoming messages are of correct order */
+  *target = static_cast<NumT>(NestTrait::extract(*arg));
+}
+
+// NumT - see above
+// StorageT - see above
 template <class NumT, class StorageT>
   requires ConvertibleIsh<StorageT, NumT>
 static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
-#define COPY_AND_RETURN                                                        \
-  assign<NumT>(*(target), (n));                                                \
-  return
   if (in_testing_mode()) {
-    if (!is_fn_under_test((module), (fn))) {
-      COPY_AND_RETURN;
-    } else {
-      if (!should_hijack_arg()) {
-        COPY_AND_RETURN;
-      }
-      const auto *arg = get_next_arg();
-      if (nullptr == arg) {
-        perror("hookt terr: size, capacity\n");
-        exit(HOOKLIB_EC_PKT_RD);
-      }
-
-      // 1. check protobuf type
-      // 2. obtain the value from the protobuf
-      // 3. rewrite the target (hijack)
-      using NestTrait = ProtobufNestTrait<StorageT>;
-      if (!NestTrait::check(*arg)) {
-        perror("Serious error - unexpected argument type @ hook_t \n");
-        std::cerr << type_name<NumT>() << ' ' << type_name<VariantChecker>()
-                  << std::endl;
-        exit(HOOKLIB_EC_TX_FIN);
-      }
-      /* is safe assuming the incoming messages are of correct order */
-      *target = static_cast<NumT>(NestTrait::extract(*arg));
+    if (!is_fn_under_test((module), (fn)) || !should_hijack_arg()) {
+      assign<NumT>(*(target), (n));
+      return;
     }
+
+    hook_t_deserialize<NumT, StorageT>(target);
     return;
   }
   // register value into the static argument packet protobuf
   auto *v = s_capptured_args->add_values();
   capture_into<StorageT>(v, n);
-  COPY_AND_RETURN;
-#undef COPY_AND_RETURN
+  assign<NumT>(*(target), (n));
 }
 
 // as mentioned in llvm-pass, the variations for same-sized primitives

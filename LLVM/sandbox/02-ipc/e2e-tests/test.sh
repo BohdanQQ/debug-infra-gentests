@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -ex
 
 # Args: <tested binary directory> <function name> <timeout in seconds> <output-testing script/directory> <clang args>
 
