@@ -7,6 +7,7 @@ import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaFieldIdentifier;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaMethodIdentifier;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContext;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerationContextFactory;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestGenerator;
@@ -271,7 +272,9 @@ public class TemporalTraceBasedGenerator implements TestGenerator {
         List<TestScenario> scenarios = new ArrayList<>();
         
         // Sample the trace at different points to capture state evolution
-        int sampleCount = Math.min(context.getMaxTestCount(), 5);
+        // Use configurable maxStateChangeSamples instead of hardcoded 5
+        int maxSamples = context.getMaxStateChangeSamples();
+        int sampleCount = Math.min(context.getMaxTestCount(), maxSamples);
         int interval = Math.max(1, (eventRange[1] - eventRange[0]) / sampleCount);
         
         for (int i = 0; i < sampleCount; i++) {
@@ -316,18 +319,21 @@ public class TemporalTraceBasedGenerator implements TestGenerator {
         sb.append(" * Trace summary: ").append(trace.getSummary().replace("\n", "\n * ")).append("\n");
         sb.append(" */\n");
         sb.append("public class ").append(testClassName).append(" {\n\n");
-        
-        // Instance variable for the class under test
+
+        // Instance variable for the class under test (skip for static methods)
         String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
         String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
-        sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
-        
-        // Setup method
-        sb.append("    @BeforeEach\n");
-        sb.append("    void setUp() {\n");
-        sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
-        sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
-        sb.append("    }\n\n");
+
+        if (!isStaticMethod()) {
+            sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
+
+            // Setup method
+            sb.append("    @BeforeEach\n");
+            sb.append("    void setUp() {\n");
+            sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
+            sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
+            sb.append("    }\n\n");
+        }
         
         // Generate test methods for each scenario
         for (TestScenario scenario : scenarios) {
@@ -369,15 +375,43 @@ public class TemporalTraceBasedGenerator implements TestGenerator {
         sb.append("        ").append(methodCall).append("\n");
         
         sb.append("\n        // Assert\n");
-        sb.append("        // TODO: Add assertions based on expected behavior at event ")
-          .append(scenario.eventIndex).append("\n");
-        sb.append("        // Captured state suggests specific outcomes based on these inputs\n");
-        
+        if (isVoidReturnType()) {
+            sb.append("        // Method returns void - verifies execution without exception\n");
+            sb.append("        // TODO: Add assertions to verify side effects (e.g., field changes)\n");
+        } else {
+            sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
+            sb.append("        // TODO: Add assertions based on expected behavior at event ")
+              .append(scenario.eventIndex).append("\n");
+            sb.append("        // Captured state suggests specific outcomes based on these inputs\n");
+        }
+
         sb.append("    }\n");
         
         return sb.toString();
     }
-    
+
+    private boolean isVoidReturnType() {
+        if (context.getTargetMethod() == null) {
+            return false;
+        }
+        String returnType = context.getTargetMethod().getReturnType();
+        return "void".equals(returnType);
+    }
+
+    private boolean isStaticMethod() {
+        if (context.getTargetMethod() instanceof JavaMethodIdentifier javaMethod) {
+            return javaMethod.isStatic();
+        }
+        return false;
+    }
+
+    private String getSimpleClassName() {
+        if (context.getTargetMethod() != null) {
+            return context.getTargetMethod().getClassName();
+        }
+        return "UnknownClass";
+    }
+
     private String generateTestMethodName(TestScenario scenario) {
         String baseName = extractMethodNameFromSignature(context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "unknownMethod");
         
@@ -398,9 +432,13 @@ public class TemporalTraceBasedGenerator implements TestGenerator {
     
     private String generateMethodCall(TestScenario scenario, String instanceName) {
         String methodName = extractMethodNameFromSignature(context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : context.getTargetMethodSignature());
-        
+
         StringBuilder call = new StringBuilder();
-        call.append("var result = ").append(instanceName).append(".").append(methodName).append("(");
+        if (!isVoidReturnType()) {
+            call.append("var result = ");
+        }
+        String targetName = isStaticMethod() ? getSimpleClassName() : instanceName;
+        call.append(targetName).append(".").append(methodName).append("(");
         
         // Add arguments from the scenario
         List<String> args = scenario.arguments.entrySet().stream()

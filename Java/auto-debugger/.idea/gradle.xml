@@ -22,6 +22,7 @@
             <option value="$PROJECT_DIR$/test-generator-java" />
             <option value="$PROJECT_DIR$/test-runner-common" />
             <option value="$PROJECT_DIR$/test-runner-java" />
+            <option value="$PROJECT_DIR$/test-utils" />
           </set>
         </option>
       </GradleProjectSettings>

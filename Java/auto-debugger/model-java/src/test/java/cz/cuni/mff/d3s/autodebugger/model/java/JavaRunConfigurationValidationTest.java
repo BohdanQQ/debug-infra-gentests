@@ -114,7 +114,7 @@ class JavaRunConfigurationValidationTest {
             .build();
 
         IllegalStateException exception = assertThrows(IllegalStateException.class, config::validate);
-        assertTrue(exception.getMessage().contains("Application file does not exist"));
+        assertTrue(exception.getMessage().contains("Application path does not exist"));
     }
 
     @Test
@@ -129,7 +129,7 @@ class JavaRunConfigurationValidationTest {
 
         try {
             IllegalStateException exception = assertThrows(IllegalStateException.class, config::validate);
-            assertTrue(exception.getMessage().contains("Application file is not readable"));
+            assertTrue(exception.getMessage().contains("Application path is not readable"));
         } finally {
             // Restore permissions for cleanup
             unreadableFile.toFile().setReadable(true);
@@ -137,7 +137,8 @@ class JavaRunConfigurationValidationTest {
     }
 
     @Test
-    void givenDirectoryAsApplicationPath_whenValidating_thenThrows() throws IOException {
+    void givenDirectoryAsApplicationPath_whenValidating_thenSucceeds() throws IOException {
+        // Directories are now allowed as application paths (for compiled class directories)
         Path directory = tempDir.resolve("app-dir");
         Files.createDirectory(directory);
 
@@ -145,8 +146,8 @@ class JavaRunConfigurationValidationTest {
             .applicationPath(directory)
             .build();
 
-        IllegalStateException exception = assertThrows(IllegalStateException.class, config::validate);
-        assertTrue(exception.getMessage().contains("Application path must point to a file, not a directory"));
+        // Should not throw - directories are valid application paths
+        assertDoesNotThrow(config::validate);
     }
 
     // Source Code Path Validation Tests
@@ -171,7 +172,9 @@ class JavaRunConfigurationValidationTest {
         assertTrue(exception.getMessage().contains("Source code directory does not exist"));
     }
 
+    // PP: disabled test case because also the validation check is disabled now
     @Test
+    @Disabled
     void givenFileAsSourceCodePath_whenValidating_thenThrows() throws IOException {
         Path file = tempDir.resolve("src-file.txt");
         Files.createFile(file);

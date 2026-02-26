@@ -26,18 +26,19 @@ class CollectorTemplateCompletenessTest {
     @Test
     void collectorRE_contains_all_registers_and_methods() throws Exception {
         String re = readResource("/templates/java/disl-analysis/CollectorRE.java");
-        // registerMethod ids
-        assertTrue(re.contains("registerMethod(\"Collector.startEvent\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectByte\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectChar\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectShort\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectInt\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectLong\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectFloat\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectDouble\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectBoolean\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectString\")"));
-        assertTrue(re.contains("registerMethod(\"Collector.collectObject\")"));
+        // registerMethod ids - uses registerMethodWithDebug wrapper which calls registerMethod
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.startEvent\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectByte\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectChar\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectShort\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectInt\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectLong\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectFloat\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectDouble\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectBoolean\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectString\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectObject\")"));
+        assertTrue(re.contains("registerMethodWithDebug(\"Collector.collectObjectJson\")"));
         // method bodies include appropriate send* calls
         assertTrue(re.contains("sendByte("));
         assertTrue(re.contains("sendChar("));
@@ -47,7 +48,7 @@ class CollectorTemplateCompletenessTest {
         assertTrue(re.contains("sendFloat("));
         assertTrue(re.contains("sendDouble("));
         assertTrue(re.contains("sendBoolean("));
-        assertTrue(re.contains("sendObject("));
+        assertTrue(re.contains("sendObjectPlusData("));
     }
 
     @Test

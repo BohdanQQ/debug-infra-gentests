@@ -24,24 +24,33 @@ public class JavaMethodSignatureParser {
     // Pattern for parameter: "slot:type" or "type:name"
     private static final Pattern PARAMETER_PATTERN = Pattern.compile("^(\\d+):(.+)$|^([^:]+):([^:]+)$");
     
-    // Pattern for field: "type:name"
+    // Pattern for field: "type:name" or "static:type:name"
     private static final Pattern FIELD_PATTERN = Pattern.compile("^([^:]+):([^:]+)$");
+    private static final Pattern STATIC_FIELD_PATTERN = Pattern.compile("^static:([^:]+):([^:]+)$");
     
     public JavaMethodIdentifier parseMethodReference(String methodReference) {
+        return parseMethodReference(methodReference, false, false);
+    }
+
+    public JavaMethodIdentifier parseMethodReference(String methodReference, boolean isStaticMethod) {
+        return parseMethodReference(methodReference, isStaticMethod, false);
+    }
+
+    public JavaMethodIdentifier parseMethodReference(String methodReference, boolean isStaticMethod, boolean isVoidMethod) {
         log.debug("Parsing Java method reference: {}", methodReference);
-        
+
         MethodSignature signature = cz.cuni.mff.d3s.autodebugger.model.java.parsing.JavaMethodSignatureParser.parseMethodSignature(methodReference);
-        
+
         if (signature.getState() != SignatureState.FULL_METHOD) {
             throw new IllegalArgumentException(
                 "Invalid method reference format. Expected complete method signature like 'package.Class.method(param1,param2)'. Got: " + methodReference);
         }
-        
+
         // Create package identifier
         JavaPackageIdentifier packageIdentifier = signature.isInDefaultPackage() ?
             JavaPackageIdentifier.DEFAULT_PACKAGE :
             new JavaPackageIdentifier(signature.getPackageName());
-        
+
         // Create class identifier
         JavaClassIdentifier classIdentifier = new JavaClassIdentifier(
             ClassIdentifierParameters.builder()
@@ -49,21 +58,22 @@ public class JavaMethodSignatureParser {
                 .className(signature.getSimpleClassName())
                 .build()
         );
-        
+
         // Create method identifier
         JavaMethodIdentifier methodIdentifier = new JavaMethodIdentifier(
             MethodIdentifierParameters.builder()
                 .ownerClassIdentifier(classIdentifier)
                 .methodName(signature.getMethodName())
-                .returnType("void") // Default return type
+                .returnType(isVoidMethod ? "void" : null) // Set to "void" if explicitly marked, otherwise unknown
                 .parameterTypes(signature.getParameterTypes())
+                .isStatic(isStaticMethod)
                 .build()
         );
-        
-        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}", 
-                 signature.getPackageName(), signature.getSimpleClassName(), 
-                 signature.getMethodName(), signature.getParameterTypes());
-        
+
+        log.debug("Successfully parsed method: package={}, class={}, method={}, parameters={}, isStatic={}, isVoid={}",
+                 signature.getPackageName(), signature.getSimpleClassName(),
+                 signature.getMethodName(), signature.getParameterTypes(), isStaticMethod, isVoidMethod);
+
         return methodIdentifier;
     }
     
@@ -150,23 +160,41 @@ public class JavaMethodSignatureParser {
     
     /**
      * Parses a single field string into a FieldIdentifier.
+     * Supports formats: "type:name" for instance fields, "static:type:name" for static fields.
      */
     private JavaFieldIdentifier parseField(String fieldString, JavaClassIdentifier ownerClass) {
-        Matcher matcher = FIELD_PATTERN.matcher(fieldString);
-        
+        // First try static field pattern
+        var staticMatcher = STATIC_FIELD_PATTERN.matcher(fieldString);
+        if (staticMatcher.matches()) {
+            var type = normalizeType(staticMatcher.group(1));
+            var name = staticMatcher.group(2);
+
+            return new JavaFieldIdentifier(
+                FieldIdentifierParameters.builder()
+                    .variableType(type)
+                    .variableName(name)
+                    .ownerClassIdentifier(ownerClass)
+                    .isStatic(true)
+                    .build()
+            );
+        }
+
+        // Try regular field pattern
+        var matcher = FIELD_PATTERN.matcher(fieldString);
         if (!matcher.matches()) {
             throw new IllegalArgumentException(
-                "Invalid field format. Expected 'type:name'. Got: " + fieldString);
+                "Invalid field format. Expected 'type:name' or 'static:type:name'. Got: " + fieldString);
         }
-        
-        String type = normalizeType(matcher.group(1));
-        String name = matcher.group(2);
-        
+
+        var type = normalizeType(matcher.group(1));
+        var name = matcher.group(2);
+
         return new JavaFieldIdentifier(
             FieldIdentifierParameters.builder()
                 .variableType(type)
                 .variableName(name)
                 .ownerClassIdentifier(ownerClass)
+                .isStatic(false)
                 .build()
         );
     }

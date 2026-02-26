@@ -1,5 +1,6 @@
 plugins {
     id("java-library")
+    alias(libs.plugins.lombok)
 }
 
 group = "cz.cuni.mff.d3s"

@@ -14,10 +14,12 @@ import java.util.stream.Collectors;
 @Getter
 public class JavaMethodIdentifier extends MethodIdentifier implements Serializable {
     private final JavaClassIdentifier ownerClassIdentifier;
+    private final boolean isStatic;
 
     public JavaMethodIdentifier(MethodIdentifierParameters parameters) {
         super(parameters.methodName, parameters.returnType, parameters.parameterTypes);
         this.ownerClassIdentifier = parameters.ownerClassIdentifier;
+        this.isStatic = parameters.isStatic;
     }
 
     /**

@@ -17,6 +17,7 @@ repositories {
 }
 
 dependencies {
+  implementation(project(mapOf("path" to ":analyzer-common")))
   implementation(project(mapOf("path" to ":model-common")))
   implementation(project(mapOf("path" to ":model-java")))
   implementation(project(mapOf("path" to ":instrumentor-common")))

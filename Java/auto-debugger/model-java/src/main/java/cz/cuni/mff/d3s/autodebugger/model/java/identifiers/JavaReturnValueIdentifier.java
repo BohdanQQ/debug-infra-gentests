@@ -36,4 +36,14 @@ public class JavaReturnValueIdentifier extends JavaValueIdentifier implements Ex
     public String getType() {
         return type;
     }
+
+    /**
+     * Returns true if the associated method returns void.
+     * Return values cannot be captured for void methods as there is no value on the stack.
+     *
+     * @return true if the method's return type is void
+     */
+    public boolean isVoidReturn() {
+        return "void".equals(type) || type == null;
+    }
 }

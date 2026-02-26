@@ -1,0 +1,12 @@
+diff --git a/build.xml b/build.xml
+index fa7fa7eb..8274f7ef 100644
+--- a/build.xml
++++ b/build.xml
+@@ -318,6 +318,7 @@
+ 			<case value="x86_64"><property name="disl.agent.arch" value="x86_64"/></case>
+ 			<case value="amd64"><property name="disl.agent.arch" value="x86_64"/></case>
+ 			<case value="ppc64"><property name="disl.agent.arch" value="ppc64"/></case>
++			<case value="aarch64"><property name="disl.agent.arch" value="aarch64"/></case>
+ 			<default><property name="disl.agent.arch" value="x86"/></default>
+ 		</ac:switch>
+ 

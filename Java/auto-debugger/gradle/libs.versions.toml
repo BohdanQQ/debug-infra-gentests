@@ -6,7 +6,7 @@ javatuples = "1.2"
 junit5 = "5.11.0"
 mockito = "5.18.0"
 picocli = "4.7.6"
-anthropic = "2.4.0"
+anthropic = "2.11.1"
 
 # plugins
 changelog = "2.2.1"

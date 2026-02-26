@@ -2,7 +2,32 @@
 
 This demo shows how to run the auto-debugger end-to-end against small toy Java applications.
 
-**⚠️ Important: For full functionality, use a real DiSL installation.** The auto-debugger requires DiSL for runtime instrumentation and data collection. While mock DiSL scripts and stub results can be used for testing the pipeline structure, they will not perform actual instrumentation or generate meaningful tests.
+**⚠️ Important: For full functionality, use a real DiSL installation.** The auto-debugger requires DiSL for runtime instrumentation and data collection.
+
+## Quick Start
+
+Build the demo apps and run (all commands from `Java/auto-debugger` directory):
+
+```bash
+# 1. Build demo apps
+./gradlew -PincludeDemo :demo:buildDemoApps
+
+# 2. Run Calculator example (captures arguments)
+./gradlew :runner:run --args="--jar $(pwd)/demo/calc-app.jar --source $(pwd)/demo/apps/args/src --output-dir $(pwd)/demo/output/args --method com.example.Calculator.add(int,int) --parameters 0:int --parameters 1:int --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+
+# 3. Run Counter example (captures instance fields)
+./gradlew :runner:run --args="--jar $(pwd)/demo/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --void-method --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+
+# 4. Run Globals example (captures static fields)
+./gradlew :runner:run --args="--jar $(pwd)/demo/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --static-method --void-method --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+
+# 5. Run Person example (captures object parameters)
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/objects/objects-app.jar --source $(pwd)/demo/apps/objects/src --output-dir $(pwd)/demo/output/objects --method com.example.PersonService.greet(com.example.Person) --parameters 0:com.example.Person --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+Set `DISL_HOME` to your DiSL installation path (e.g., `export DISL_HOME=/path/to/disl`).
+
+---
 
 ## Real DiSL vs Mock DiSL
 
@@ -22,6 +47,7 @@ Contents:
 - apps/args: demonstrates argument capture (naive vs temporal)
 - apps/fields: demonstrates instance fields
 - apps/static: demonstrates static fields
+- apps/objects: demonstrates object parameter capture
 - scripts/mock-disl.py: a tiny Python script that stands in for DiSL's disl.py
 - scripts/prepare_stub_results.(sh|py): creates a stub test and a results list in the output directory
 
@@ -155,7 +181,7 @@ Examples:
 ```bash
 # Naive mode with real DiSL
 ./gradlew :runner:run --args=" \
-  --jar $(pwd)/demo/apps/args/calc-app.jar \
+  --jar $(pwd)/demo/calc-app.jar \
   --source $(pwd)/demo/apps/args/src \
   --output-dir $(pwd)/demo/output/args-naive \
   --method com.example.Calculator.add(int,int) \
@@ -169,7 +195,7 @@ Examples:
 
 # Temporal mode with real DiSL
 ./gradlew :runner:run --args=" \
-  --jar $(pwd)/demo/apps/args/calc-app.jar \
+  --jar $(pwd)/demo/calc-app.jar \
   --source $(pwd)/demo/apps/args/src \
   --output-dir $(pwd)/demo/output/args-temporal \
   --method com.example.Calculator.add(int,int) \
@@ -188,10 +214,12 @@ Examples:
 
 ```bash
 ./gradlew :runner:run --args=" \
-  --jar $(pwd)/demo/apps/fields/fields-app.jar \
+  --jar $(pwd)/demo/fields-app.jar \
   --source $(pwd)/demo/apps/fields/src \
   --output-dir $(pwd)/demo/output/fields-naive \
   --method com.example.Counter.increment() \
+  --void-method \
+  --fields int:value \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode naive \
   --test-strategy trace-based-basic \
@@ -206,12 +234,34 @@ Examples:
 
 ```bash
 ./gradlew :runner:run --args=" \
-  --jar $(pwd)/demo/apps/static/static-app.jar \
+  --jar $(pwd)/demo/static-app.jar \
   --source $(pwd)/demo/apps/static/src \
   --output-dir $(pwd)/demo/output/static-temporal \
   --method com.example.Globals.bump() \
+  --static-method \
+  --void-method \
+  --fields static:int:X \
   --disl-home /Users/leskovde/repos/disl \
   --trace-mode temporal \
+  --test-strategy trace-based-basic \
+  --classpath '' \
+  --args '' \
+"
+```
+
+### D) Objects app (PersonService.greet)
+- Target: `com.example.PersonService.greet(com.example.Person)` called multiple times from `PersonApp`.
+- Demonstrates object parameter capture.
+
+```bash
+./gradlew :runner:run --args=" \
+  --jar $(pwd)/demo/apps/objects/objects-app.jar \
+  --source $(pwd)/demo/apps/objects/src \
+  --output-dir $(pwd)/demo/output/objects-naive \
+  --method com.example.PersonService.greet(com.example.Person) \
+  --parameters 0:com.example.Person \
+  --disl-home /Users/leskovde/repos/disl \
+  --trace-mode naive \
   --test-strategy trace-based-basic \
   --classpath '' \
   --args '' \
@@ -245,4 +295,7 @@ Examples:
 - apps/fields/src/com/example/Counter.java
 - apps/static/src/com/example/StaticApp.java
 - apps/static/src/com/example/Globals.java
+- apps/objects/src/com/example/PersonApp.java
+- apps/objects/src/com/example/PersonService.java
+- apps/objects/src/com/example/Person.java
 

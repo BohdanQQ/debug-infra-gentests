@@ -20,13 +20,15 @@ public class LLMConfiguration {
     /**
      * Claude model name to use.
      * Supported models:
-     * - "claude-sonnet-4-20250514" (default, most capable)
-     * - "claude-3-5-sonnet-20241022" (fast and capable)
-     * - "claude-3-5-haiku-20241022" (fastest, cost-effective)
+     * - "claude-sonnet-4-5-20250929" (default, most capable - Sonnet 4.5)
+     * - "claude-sonnet-4-20250514" (Sonnet 4)
+     * - "claude-3-7-sonnet-20250219" (Sonnet 3.7)
+     * - "claude-3-5-haiku-20241022" (fast, cost-effective)
+     * - "claude-3-haiku-20240307" (cheapest, basic tasks)
      * - "mock" (for testing, returns predefined responses)
      */
     @Builder.Default
-    private final String modelName = "claude-sonnet-4-20250514";
+    private final String modelName = "claude-sonnet-4-5-20250929";
 
     /**
      * API key for Anthropic Claude API.

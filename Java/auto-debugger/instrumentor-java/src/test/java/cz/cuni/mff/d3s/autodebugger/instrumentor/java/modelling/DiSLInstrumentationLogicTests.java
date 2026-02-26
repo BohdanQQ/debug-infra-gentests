@@ -25,7 +25,7 @@ class DiSLInstrumentationLogicTests {
 
     // then
     String expectedCode = """
-      @Before(marker = BodyMarker.class, scope = "Test.test")
+      @Before(marker = BodyMarker.class, scope = "targets.extraction.Test.test")
       public static void generatedMethod1(DynamicContext di) {
       FileOutputStream fileOut;ObjectOutputStream out;
       try {
@@ -51,7 +51,7 @@ class DiSLInstrumentationLogicTests {
 
     // then
     String expectedCode = """
-      @Before(marker = BodyMarker.class, scope = "Test.test")
+      @Before(marker = BodyMarker.class, scope = "targets.extraction.Test.test")
       public static void generatedMethod1(DynamicContext di) {
       System.out.println("[Instrumentation process] PID: " + ProcessHandle.current().pid());
       CollectorRE.startEvent();

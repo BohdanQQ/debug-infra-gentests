@@ -11,11 +11,11 @@ public class TestGenerationStrategyProviderTest {
     @Test
     public void givenStrategyProvider_whenGetAvailableStrategies_thenReturnsValidList() {
         List<TestGenerationStrategy> strategies = TestGenerationStrategyProvider.getAvailableStrategies();
-        
+
         assertNotNull(strategies);
         assertFalse(strategies.isEmpty());
-        assertTrue(strategies.size() >= 6); // We expect at least 6 strategies
-        
+        assertEquals(3, strategies.size()); // We expect exactly 3 implemented strategies
+
         // Check that all strategies have required fields
         for (TestGenerationStrategy strategy : strategies) {
             assertNotNull(strategy.getId());
@@ -78,20 +78,29 @@ public class TestGenerationStrategyProviderTest {
     @Test
     public void givenExpectedStrategies_whenCheckingPresence_thenAllAreAvailable() {
         List<TestGenerationStrategy> strategies = TestGenerationStrategyProvider.getAvailableStrategies();
-        
-        // Check that all expected strategies are present
+
+        // Check that all implemented strategies are present
         String[] expectedIds = {
             "trace-based-basic",
-            "trace-based-advanced", 
-            "property-based",
-            "mutation-based",
-            "symbolic-execution",
+            "trace-based-advanced",
             "ai-assisted"
         };
-        
+
         for (String expectedId : expectedIds) {
-            assertTrue(TestGenerationStrategyProvider.hasStrategy(expectedId), 
+            assertTrue(TestGenerationStrategyProvider.hasStrategy(expectedId),
                 "Strategy with ID '" + expectedId + "' should be present");
+        }
+
+        // Verify that unimplemented strategies are NOT present
+        String[] unimplementedIds = {
+            "property-based",
+            "mutation-based",
+            "symbolic-execution"
+        };
+
+        for (String unimplementedId : unimplementedIds) {
+            assertFalse(TestGenerationStrategyProvider.hasStrategy(unimplementedId),
+                "Strategy with ID '" + unimplementedId + "' should NOT be present (not implemented)");
         }
     }
 

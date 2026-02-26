@@ -33,6 +33,8 @@ The following dependencies are required only for specific functionalities:
 - **DiSL Framework**: Required for instrumentation and dynamic analysis features
     - Without DiSL: Test generation from pre-existing traces still functions
     - Mock instrumentation can be used for development and testing
+    - Patches for DiSL, available in the [patches/disl](./patches/disl) directory, need to be applied especially on the **macOS** platform (see the [README](./patches/disl/README.md) for details)
+
 - **Anthropic API Key**: Required for LLM-based test generation
     - Without API key: Trace-based and naive generation strategies remain fully functional
     - Set via `ANTHROPIC_API_KEY` environment variable or `--api-key` command line option
@@ -57,18 +59,40 @@ The following dependencies are required only for specific functionalities:
    ./gradlew :runner:run --args="--help"
    ```
 
-### Basic Usage Example
+### Demo Examples
+
+Four demo apps are provided in `demo/apps/`. Build them first:
 
 ```bash
-# Generate tests for a Java application
-./gradlew :runner:run --args="
-  --jar /path/to/your/application.jar
-  --source /path/to/source/code
-  --output-dir /path/to/output
-  --method org.example.YourClass.yourMethod(int,String)
-  --disl-home /path/to/disl
-"
+./gradlew -PincludeDemo :demo:buildDemoApps
 ```
+
+Set your DiSL installation path:
+```bash
+export DISL_HOME=/path/to/disl
+```
+
+**1. Calculator (argument capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/args/calc-app.jar --source $(pwd)/demo/apps/args/src --output-dir $(pwd)/demo/output/args --method com.example.Calculator.add(int,int) --parameters 0:int --parameters 1:int --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**2. Counter (instance field capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/fields/fields-app.jar --source $(pwd)/demo/apps/fields/src --output-dir $(pwd)/demo/output/fields --method com.example.Counter.increment() --fields int:value --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**3. Globals (static field capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/static/static-app.jar --source $(pwd)/demo/apps/static/src --output-dir $(pwd)/demo/output/static --method com.example.Globals.bump() --fields static:int:X --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+**4. Person (object parameter capture):**
+```bash
+./gradlew :runner:run --args="--jar $(pwd)/demo/apps/objects/objects-app.jar --source $(pwd)/demo/apps/objects/src --output-dir $(pwd)/demo/output/objects --method com.example.PersonService.greet(com.example.Person) --parameters 0:com.example.Person --disl-home $DISL_HOME --trace-mode naive --test-strategy trace-based-basic"
+```
+
+See `demo/README.md` for detailed instructions and troubleshooting.
 
 ### IntelliJ Plugin Development
 
@@ -103,7 +127,27 @@ Run the complete test suite:
   - ${TARGET_PACKAGE}, ${TARGET_CLASS}, ${TARGET_METHOD}, ${TARGET_RETURN}
   - Construction is done via TestGenerationContextFactory.createFromStrings(...), ensuring consistent metadata for generators.
 
+### Test Generation Limits
 
+By default, the auto-debugger generates tests for **all captured argument combinations** to ensure no important test cases are missed (e.g., bug-triggering inputs).
+
+If you have a large number of captured values and want to limit test generation, use:
+
+```bash
+--max-argument-combinations COUNT
+```
+
+**Examples:**
+
+```bash
+# Generate tests for ALL captured values (default behavior)
+./gradlew :runner:run --args="--jar app.jar --source src --method com.example.Method(String)"
+
+# Limit to 50 argument combinations (useful for large traces)
+./gradlew :runner:run --args="--jar app.jar --source src --method com.example.Method(String) --max-argument-combinations 50"
+```
+
+**Note:** When working with Defects4J or similar benchmarks, keeping the default (no limit) ensures that bug-triggering inputs at any position in the trace are included in the generated tests.
 
 ## Output artifacts and directories
 
@@ -364,9 +408,10 @@ public class DiSLClass {
 
 ## Test Generation Strategies
 
-The framework supports (or plans to support soon) multiple test generation approaches:
+The framework currently supports three test generation approaches:
 
-1. **Naive Trace-Based**: Direct replay of observed method calls with captured parameters
-2. **Enhanced Temporal**: Sophisticated generation using temporal trace semantics with state reconstruction
-3. **LLM-Powered**: AI-assisted test generation using large language models for semantic understanding
-4. **Hybrid Approaches**: Combination of trace-based and AI techniques for comprehensive coverage
+1. **Trace-Based Basic (Naive)**: Direct replay of observed method calls with captured parameters
+2. **Trace-Based Advanced (Temporal)**: Sophisticated generation using temporal trace semantics with state reconstruction
+3. **AI-Assisted (LLM-Powered)**: AI-assisted test generation using large language models for semantic understanding
+
+Future strategies under consideration include property-based testing, mutation-based testing, symbolic execution, and hybrid approaches combining multiple techniques.

@@ -34,6 +34,9 @@ public class InstrumentationResult {
     /** Exact path where the analysis/collector will append generated test paths. */
     private final Path resultsListPath;
 
+    /** Path where the serialized Trace object will be written by the collector. */
+    private final Path traceFilePath;
+
     public List<Path> getAdditionalArtifacts() {
         return additionalArtifacts == null ? List.of() : Collections.unmodifiableList(additionalArtifacts);
     }

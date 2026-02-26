@@ -185,13 +185,9 @@ public class CodeValidator {
     }
     
     private int countOccurrences(String text, char character) {
-        int count = 0;
-        for (char c : text.toCharArray()) {
-            if (c == character) {
-                count++;
-            }
-        }
-        return count;
+        return (int) text.chars()
+                .filter(c -> c == character)
+                .count();
     }
     
     private String extractImportedClass(String importLine) {

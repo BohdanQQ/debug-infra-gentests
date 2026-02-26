@@ -1,0 +1,22 @@
+diff --git a/src-disl-agent/Makefile b/src-disl-agent/Makefile
+index 12c86be5..b21f9bce 100644
+--- a/src-disl-agent/Makefile
++++ b/src-disl-agent/Makefile
+@@ -63,7 +63,7 @@ else ifneq (,$(filter DarwinX Darwin,$(TARGET_ENV)))
+         LD := darwinx-ld
+         CFLAGS += -DDARWINX
+     else
+-        LD_SHARED := -dylib
++        LD_SHARED := -dylib -syslibroot /Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk -lSystem /opt/homebrew/Cellar/llvm/21.1.7/lib/clang/21/lib/darwin/libclang_rt.osx.a
+     endif
+ 
+ else ifeq (Linux,$(TARGET_ENV))
+@@ -91,6 +91,8 @@ ifeq (x86_64,$(TARGET_CPU))
+     BUILD_DIR := $(JDK_TARGET)-x86_64
+ else ifeq (ppc64,$(TARGET_CPU))
+     BUILD_DIR := $(JDK_TARGET)-ppc64
++else ifeq (arm64,$(TARGET_CPU))
++    BUILD_DIR := $(JDK_TARGET)-aarch64
+ else
+     BUILD_DIR := $(JDK_TARGET)-x86
+ endif

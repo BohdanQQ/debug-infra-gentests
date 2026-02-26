@@ -10,7 +10,15 @@ public class JavaReturnValue extends JavaValue {
 
     @Override
     public String emitCode() {
-        // TODO
-        return "";
+        append(exportedValueIdentifier.getType());
+        append(" ");
+        append(instrumentationVariableIdentifier.getName());
+        append(" = ");
+        append("di.getStackValue(");
+        append("0");
+        append(", ");
+        append(exportedValueIdentifier.getType());
+        append(".class);");
+        return getCode();
     }
 }

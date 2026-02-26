@@ -22,4 +22,15 @@ public abstract class JavaValueIdentifier implements Identifier, ExportableValue
     protected JavaValueIdentifier(ValueType valueType) {
         this.valueType = valueType;
     }
+
+    /**
+     * Returns true if this value can only be captured after method execution.
+     * Currently only return values require after-capture.
+     * Arguments, fields, and local variables can be captured at method entry.
+     *
+     * @return true if this value requires capture in an @After or @AfterReturning hook
+     */
+    public boolean requiresAfterCapture() {
+        return valueType == ValueType.RETURN_VALUE;
+    }
 }

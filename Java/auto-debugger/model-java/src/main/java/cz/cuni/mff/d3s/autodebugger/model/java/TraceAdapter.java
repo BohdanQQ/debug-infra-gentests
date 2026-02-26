@@ -1,12 +1,14 @@
 package cz.cuni.mff.d3s.autodebugger.model.java;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.identifiers.ExportableValue;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.IndexedTrace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.TemporalTrace;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Map;
+import java.util.NavigableMap;
 import java.util.Set;
 
 /**
@@ -53,6 +55,71 @@ public class TraceAdapter {
                 enhancedTrace.getTrackedVariableCount(), enhancedTrace.getTotalEventCount());
 
         return enhancedTrace;
+    }
+
+    /**
+     * Converts an IndexedTrace to a TemporalTrace using identifier mapping.
+     * <p>
+     * Unlike {@link #convertToEnhanced(Trace, Map)} which creates synthetic sequential event indices,
+     * this method preserves the TRUE event indices from the original trace collection.
+     * This maintains the actual temporal ordering of events as they occurred during execution,
+     * which is critical for accurate test generation and debugging.
+     * <p>
+     * The IndexedTrace format stores values indexed by slot ID and event index, where event indices
+     * represent the actual execution timeline. This method maps slot IDs to JavaValueIdentifiers
+     * and transfers all (eventIndex, value) pairs while preserving their temporal relationships.
+     *
+     * @param indexedTrace The IndexedTrace containing slot-based data with true event indices
+     * @param identifierMapping Mapping from slot IDs to JavaValueIdentifier instances
+     * @return TemporalTrace with all values transferred using their original event indices
+     */
+    public static TemporalTrace convertFromIndexed(IndexedTrace indexedTrace,
+                                                   Map<Integer, JavaValueIdentifier> identifierMapping) {
+        log.info("Converting IndexedTrace to TemporalTrace with {} identifiers",
+                identifierMapping.size());
+
+        TemporalTrace temporalTrace = new TemporalTrace();
+        int totalValuesConverted = 0;
+        int skippedSlots = 0;
+
+        // Process each slot in the indexed trace
+        for (Integer slot : indexedTrace.getAllSlots()) {
+            JavaValueIdentifier identifier = identifierMapping.get(slot);
+
+            if (identifier == null) {
+                log.warn("No identifier mapping found for slot {}, skipping this slot", slot);
+                skippedSlots++;
+                continue;
+            }
+
+            // Get all (eventIndex, value) pairs for this slot
+            NavigableMap<Integer, Object> slotValues = indexedTrace.getValues(slot);
+
+            // Transfer each value with its original event index
+            for (Map.Entry<Integer, Object> entry : slotValues.entrySet()) {
+                Integer eventIndex = entry.getKey();
+                Object value = entry.getValue();
+
+                temporalTrace.addValue(identifier, eventIndex, value);
+                totalValuesConverted++;
+
+                log.debug("Converted slot {} -> identifier {} at event {}: {}",
+                         slot, identifier.getName(), eventIndex, value);
+            }
+        }
+
+        // Add metadata about the conversion
+        temporalTrace.addMetadata("converted_from", "indexed_trace");
+        temporalTrace.addMetadata("conversion_timestamp", System.currentTimeMillis());
+        temporalTrace.addMetadata("original_slot_count", indexedTrace.getAllSlots().size());
+        temporalTrace.addMetadata("mapped_slot_count", identifierMapping.size());
+        temporalTrace.addMetadata("skipped_slot_count", skippedSlots);
+        temporalTrace.addMetadata("preserves_true_event_indices", true);
+
+        log.info("Conversion completed. TemporalTrace contains {} variables with {} total events (skipped {} unmapped slots)",
+                temporalTrace.getTrackedVariableCount(), totalValuesConverted, skippedSlots);
+
+        return temporalTrace;
     }
 
     /**
@@ -120,6 +187,14 @@ public class TraceAdapter {
                 }
                 break;
 
+            case "string":
+            case "java.lang.string":
+                Set<String> stringValues = legacyTrace.getStringValues(slot);
+                for (String value : stringValues) {
+                    enhancedTrace.addValue(identifier, currentEventIndex++, value);
+                }
+                break;
+
             default:
                 log.warn("Unknown type '{}' for identifier {}, skipping conversion", type, identifier);
                 break;
@@ -159,6 +234,7 @@ public class TraceAdapter {
                     break;
 
                 case "string":
+                case "java.lang.string":
                     trace.addValue(identifier, eventIndex++, "initial");
                     trace.addValue(identifier, eventIndex++, "modified");
                     break;

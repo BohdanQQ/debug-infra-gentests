@@ -70,7 +70,7 @@ public class Constants {
                       .variableType("java.lang.String")
                       .ownerClassIdentifier(testClassIdentifier)
                       .build());
-    public static final JavaField javaField = new JavaField(stringFieldIdentifier.getFieldName(), stringFieldIdentifier.getOwnerClassIdentifier().getName(), stringFieldIdentifier);
+    public static final JavaField javaField = new JavaField(stringFieldIdentifier.getFieldName(), stringFieldIdentifier.getOwnerClassIdentifier().getName(), stringFieldIdentifier.isStatic(), stringFieldIdentifier);
 
     public static final JavaVariable javaVariable = new JavaVariable(0, stringArgumentIdentifier);
 

@@ -2,6 +2,7 @@ package cz.cuni.mff.d3s.autodebugger.model.java;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.TempPathResolver;
 import cz.cuni.mff.d3s.autodebugger.model.common.TraceMode;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaFieldIdentifier;
@@ -18,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Objects;
 import java.util.List;
 
 /**
@@ -44,7 +46,7 @@ public class JavaRunConfiguration implements RunConfiguration {
     public final List<String> runtimeArguments;
 
     @Builder.Default
-    private final Path outputDirectory = Path.of("auto-debugger-output");
+    private final Path outputDirectory = TempPathResolver.getDefaultOutputDirectory();
 
 
     @Builder.Default
@@ -54,7 +56,17 @@ public class JavaRunConfiguration implements RunConfiguration {
     private final TraceMode traceMode = TraceMode.NAIVE;
 
     @Builder.Default
-    private final Path dislHomePath = Path.of("../../disl/");
+    private final String testGenerationStrategy = "trace-based-basic";
+
+    /**
+     * Maximum number of argument value combinations to generate in tests.
+     * Default: null (uses TestGenerationContext default of Integer.MAX_VALUE - no limit).
+     * When set, limits the number of test scenarios generated from argument values.
+     */
+    private final Integer maxArgumentCombinations;
+
+    // No default - must be explicitly set via CLI argument or DISL_HOME env var
+    private final Path dislHomePath;
 
     @Override
     public void validate() {
@@ -123,8 +135,9 @@ public class JavaRunConfiguration implements RunConfiguration {
     }
 
     /**
-     * Validates the application path is an existing, readable file.
-     * Issues a warning if the file does not have a .jar extension.
+     * Validates the application path is an existing, readable file or directory.
+     * For JAR files, issues a warning if the file does not have a .jar extension.
+     * For directories, assumes it contains compiled class files.
      */
     private void validateApplicationPath() {
         if (applicationPath == null) {
@@ -132,21 +145,24 @@ public class JavaRunConfiguration implements RunConfiguration {
         }
 
         if (!Files.exists(applicationPath)) {
-            throw new IllegalStateException("Application file does not exist: " + applicationPath);
+            throw new IllegalStateException("Application path does not exist: " + applicationPath);
         }
 
         if (!Files.isReadable(applicationPath)) {
-            throw new IllegalStateException("Application file is not readable: " + applicationPath);
+            throw new IllegalStateException("Application path is not readable: " + applicationPath);
         }
 
-        if (!Files.isRegularFile(applicationPath)) {
-            throw new IllegalStateException("Application path must point to a file, not a directory: " + applicationPath);
+        // Allow both regular files (JARs) and directories (compiled classes)
+        if (!Files.isRegularFile(applicationPath) && !Files.isDirectory(applicationPath)) {
+            throw new IllegalStateException("Application path must be a file or directory: " + applicationPath);
         }
 
-        // Validate that application is a JAR file for Java
-        String fileName = applicationPath.getFileName().toString().toLowerCase();
-        if (!fileName.endsWith(".jar")) {
-            log.warn("Application file does not appear to be a JAR file: {}", fileName);
+        // Validate that application is a JAR file for Java (only warn for files)
+        if (Files.isRegularFile(applicationPath)) {
+            String fileName = applicationPath.getFileName().toString().toLowerCase();
+            if (!fileName.endsWith(".jar")) {
+                log.warn("Application file does not appear to be a JAR file: {}", fileName);
+            }
         }
     }
 
@@ -162,9 +178,12 @@ public class JavaRunConfiguration implements RunConfiguration {
             throw new IllegalStateException("Source code directory does not exist: " + sourceCodePath);
         }
 
+        // PP: disabled this check because source code path refers to a single file when tests are generated using LLM
+        /*
         if (!Files.isDirectory(sourceCodePath)) {
             throw new IllegalStateException("Source code path must point to a directory: " + sourceCodePath);
         }
+        */
 
         if (!Files.isReadable(sourceCodePath)) {
             throw new IllegalStateException("Source code directory is not readable: " + sourceCodePath);
@@ -313,10 +332,10 @@ public class JavaRunConfiguration implements RunConfiguration {
         List<String> methodParameterTypes = targetMethod.getParameterTypes();
 
         for (JavaValueIdentifier exportableValue : exportableValues) {
-            if (exportableValue instanceof JavaArgumentIdentifier) {
-                validateArgumentIdentifier((JavaArgumentIdentifier) exportableValue, methodParameterTypes);
-            } else if (exportableValue instanceof JavaFieldIdentifier) {
-                validateFieldIdentifier((JavaFieldIdentifier) exportableValue);
+            if (exportableValue instanceof JavaArgumentIdentifier argId) {
+                validateArgumentIdentifier(argId, methodParameterTypes);
+            } else if (exportableValue instanceof JavaFieldIdentifier fieldId) {
+                validateFieldIdentifier(fieldId);
             }
         }
     }
@@ -361,9 +380,7 @@ public class JavaRunConfiguration implements RunConfiguration {
         }
 
         if (fieldIdentifier.getOwnerClassIdentifier() == null) {
-            throw new IllegalStateException(
-                "Field identifier must have an owner class identifier for field: " + fieldIdentifier.getFieldName()
-            );
+            throw new IllegalStateException("Field identifier must have an owner class identifier for field: " + fieldIdentifier.getFieldName());
         }
 
         // Note: Full field existence validation would require loading the class from the classpath

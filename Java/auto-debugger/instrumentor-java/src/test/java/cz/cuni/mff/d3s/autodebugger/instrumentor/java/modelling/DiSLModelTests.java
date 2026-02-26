@@ -55,8 +55,8 @@ class DiSLModelTests {
 
         // Verify the generated code contains expected elements
         assertTrue(generatedCode.contains("public class DiSLClass"), "Should contain class declaration");
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"Processor.process\")"), "Should contain @Before annotation with correct scope");
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"Processor.process\")"), "Should contain @After annotation with correct scope");
+        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"com.example.Processor.process(int)\")"), "Should contain @Before annotation with correct scope");
+        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"com.example.Processor.process(int)\")"), "Should contain @After annotation with correct scope");
         assertTrue(generatedCode.contains("public static void"), "Should contain static method");
         assertTrue(generatedCode.contains("DynamicContext di"), "Should contain DynamicContext parameter");
 
@@ -250,13 +250,10 @@ class DiSLModelTests {
      * Test Case 4.1: Generate instrumentation with an @AfterReturning annotation to capture a return value.
      * Target Method: public String formatData() in class com.example.Formatter
      * Exportable Value: The method's return value
-     * Activation Time: ActivationTime.AFTER_RETURNING
-     * <p>
-     * Note: This test verifies the model structure is correct even if return value handling
-     * is not fully implemented in the code emission.
+     * Activation Time: ActivationTime.AFTER_RETURNING (auto-selected when return value is exported)
      */
     @Test
-    void givenReturnValueIdentifier_whenConstructingModel_thenInstrumentationIsGenerated() {
+    void givenReturnValueIdentifier_whenConstructingModel_thenAfterReturningInstrumentationIsGenerated() {
         // given
         JavaClassIdentifier formatterClass = new JavaClassIdentifier(
                 ClassIdentifierParameters.builder()
@@ -286,13 +283,23 @@ class DiSLModelTests {
         assertNotNull(generatedCode);
 
         // Verify the model was constructed successfully
-        // The current implementation generates @Before and @After, but the structure should support @AfterReturning
         assertTrue(generatedCode.contains("public class DiSLClass"));
         assertTrue(generatedCode.contains("public static void"));
         assertTrue(generatedCode.contains("DynamicContext di"));
 
         // Verify scope is correct
-        assertTrue(generatedCode.contains("scope = \"Formatter.formatData\""));
+        assertTrue(generatedCode.contains("scope = \"com.example.Formatter.formatData\""));
+
+        // NEW: Verify @AfterReturning is used (not @Before or @After)
+        assertTrue(generatedCode.contains("@AfterReturning"), "Should use @AfterReturning for return value capture");
+        assertFalse(generatedCode.contains("@Before"), "Should not have @Before when only return value is captured");
+        assertFalse(generatedCode.contains("@After("), "Should not have @After when capturing return value");
+
+        // Verify AfterReturning import is present
+        assertTrue(generatedCode.contains("import ch.usi.dag.disl.annotation.AfterReturning;"));
+
+        // Verify return value capture code
+        assertTrue(generatedCode.contains("di.getStackValue(0, java.lang.String.class)"));
     }
 
     /**
@@ -335,8 +342,8 @@ class DiSLModelTests {
         assertNotNull(generatedCode);
 
         // Verify the generated code contains both @Before and @After annotations
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"StateManager.updateState\")"));
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"StateManager.updateState\")"));
+        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"com.example.StateManager.updateState\")"));
+        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"com.example.StateManager.updateState\")"));
 
         // Count the number of static methods (should be 2: one for @Before, one for @After)
         long methodCount = generatedCode.lines()
@@ -360,10 +367,11 @@ class DiSLModelTests {
 
     /**
      * Test that DiSLModel correctly handles an empty exportable values list.
-     * This should not fail but should generate instrumentation methods without a value collection.
+     * With no values to export, no instrumentation methods should be generated
+     * (there's nothing to capture, so no hooks are needed).
      */
     @Test
-    void givenEmptyExportableValues_whenConstructingModel_thenBasicInstrumentationIsGenerated() {
+    void givenEmptyExportableValues_whenConstructingModel_thenNoInstrumentationMethodsGenerated() {
         // given
         JavaClassIdentifier testClass = new JavaClassIdentifier(
                 ClassIdentifierParameters.builder()
@@ -388,16 +396,278 @@ class DiSLModelTests {
         assertNotNull(model);
         assertNotNull(generatedCode);
 
-        // Verify basic structure is still generated
+        // Verify basic class structure is still generated
         assertTrue(generatedCode.contains("public class DiSLClass"));
-        assertTrue(generatedCode.contains("@Before(marker = BodyMarker.class, scope = \"TestClass.testMethod\")"));
-        assertTrue(generatedCode.contains("@After(marker = BodyMarker.class, scope = \"TestClass.testMethod\")"));
-        assertTrue(generatedCode.contains("public static void"));
-        assertTrue(generatedCode.contains("DynamicContext di"));
+
+        // No instrumentation methods should be generated when there are no exports
+        assertFalse(generatedCode.contains("@Before"));
+        assertFalse(generatedCode.contains("@After"));
 
         // Should not contain any value collection code
         assertFalse(generatedCode.contains("di.getMethodArgumentValue"));
         assertFalse(generatedCode.contains("di.getInstanceFieldValue"));
         assertFalse(generatedCode.contains("CollectorRE.collect"));
+    }
+
+    // ===============================
+    // Return Value Partitioning Tests
+    // ===============================
+
+    /**
+     * Test that when only return value is exported, only @AfterReturning is generated (no @Before).
+     */
+    @Test
+    void givenOnlyReturnValue_whenConstructingModel_thenOnlyAfterReturningGenerated() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Calculator")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("calculate")
+                        .returnType("int")
+                        .build());
+
+        JavaReturnValueIdentifier returnValue = new JavaReturnValueIdentifier(
+                new ReturnValueIdentifierParameters(targetMethod));
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(returnValue));
+        String generatedCode = model.transform();
+
+        // then
+        assertNotNull(generatedCode);
+
+        // Should have @AfterReturning, not @Before or @After
+        assertTrue(generatedCode.contains("@AfterReturning"));
+        assertFalse(generatedCode.contains("@Before"));
+        assertFalse(generatedCode.contains("@After("));
+
+        // Should have AfterReturning import
+        assertTrue(generatedCode.contains("import ch.usi.dag.disl.annotation.AfterReturning;"));
+
+        // Should capture return value using getStackValue
+        String normalizedCode = normalizeVariableNames(generatedCode);
+        assertTrue(normalizedCode.contains("di.getStackValue(0, int.class)"));
+    }
+
+    /**
+     * Test that arguments go to @Before, return values go to @AfterReturning.
+     */
+    @Test
+    void givenArgumentsAndReturnValue_whenConstructingModel_thenCorrectPartitioning() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Calculator")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("add")
+                        .returnType("int")
+                        .parameterTypes(List.of("int", "int"))
+                        .build());
+
+        JavaArgumentIdentifier arg1 = new JavaArgumentIdentifier(
+                ArgumentIdentifierParameters.builder()
+                        .argumentSlot(0)
+                        .variableType("int")
+                        .build());
+
+        JavaReturnValueIdentifier returnValue = new JavaReturnValueIdentifier(
+                new ReturnValueIdentifierParameters(targetMethod));
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(arg1, returnValue));
+        String generatedCode = model.transform();
+
+        // then
+        assertNotNull(generatedCode);
+
+        // Should have both @Before and @AfterReturning
+        assertTrue(generatedCode.contains("@Before"));
+        assertTrue(generatedCode.contains("@AfterReturning"));
+
+        // @Before should contain argument capture
+        assertTrue(generatedCode.contains("di.getMethodArgumentValue"));
+
+        // @AfterReturning should contain return value capture
+        assertTrue(generatedCode.contains("di.getStackValue(0, int.class)"));
+    }
+
+    /**
+     * Test that void return values are silently skipped.
+     */
+    @Test
+    void givenVoidReturnValue_whenConstructingModel_thenReturnValueSkipped() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Processor")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("process")
+                        .returnType("void")  // void method
+                        .build());
+
+        // Attempt to export return value of void method
+        JavaReturnValueIdentifier returnValue = new JavaReturnValueIdentifier(
+                new ReturnValueIdentifierParameters(targetMethod));
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(returnValue));
+        String generatedCode = model.transform();
+
+        // then
+        assertNotNull(generatedCode);
+
+        // Should not contain any return value capture code
+        assertFalse(generatedCode.contains("di.getStackValue"));
+
+        // Should not have @AfterReturning (no return values to capture)
+        assertFalse(generatedCode.contains("@AfterReturning"));
+        assertFalse(generatedCode.contains("@After"));
+        assertFalse(generatedCode.contains("@Before"));
+    }
+
+    /**
+     * Test that void return value with arguments still captures arguments.
+     */
+    @Test
+    void givenVoidReturnValueAndArgument_whenConstructingModel_thenArgumentCapturedReturnValueSkipped() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Processor")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("process")
+                        .returnType("void")
+                        .parameterTypes(List.of("int"))
+                        .build());
+
+        JavaArgumentIdentifier arg = new JavaArgumentIdentifier(
+                ArgumentIdentifierParameters.builder()
+                        .argumentSlot(0)
+                        .variableType("int")
+                        .build());
+
+        JavaReturnValueIdentifier returnValue = new JavaReturnValueIdentifier(
+                new ReturnValueIdentifierParameters(targetMethod));
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(arg, returnValue));
+        String generatedCode = model.transform();
+
+        // then
+        assertNotNull(generatedCode);
+
+        // Should have argument capture
+        assertTrue(generatedCode.contains("di.getMethodArgumentValue"));
+        assertTrue(generatedCode.contains("@Before"));
+        assertTrue(generatedCode.contains("@After"));  // Fields/args go in @After for state tracking
+
+        // Should NOT have return value capture (void method)
+        assertFalse(generatedCode.contains("di.getStackValue"));
+        assertFalse(generatedCode.contains("@AfterReturning"));
+    }
+
+    /**
+     * Test that fields go in both @Before and @After for state change tracking.
+     */
+    @Test
+    void givenOnlyField_whenConstructingModel_thenFieldInBothHooks() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Counter")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("increment")
+                        .returnType("void")
+                        .build());
+
+        JavaFieldIdentifier field = new JavaFieldIdentifier(
+                FieldIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .variableName("count")
+                        .variableType("int")
+                        .isStatic(false)
+                        .build());
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(field));
+        String generatedCode = model.transform();
+
+        // then
+        assertNotNull(generatedCode);
+
+        // Should have both @Before and @After (for state tracking)
+        assertTrue(generatedCode.contains("@Before"));
+        assertTrue(generatedCode.contains("@After"));
+
+        // Field should be captured in both - count occurrences
+        int fieldCaptureCount = countOccurrences(generatedCode, "di.getInstanceFieldValue");
+        assertEquals(2, fieldCaptureCount, "Field should be captured in both @Before and @After hooks");
+    }
+
+    /**
+     * Test that Object return type uses Object.class for getStackValue.
+     */
+    @Test
+    void givenObjectReturnType_whenConstructingModel_thenUsesObjectClass() {
+        // given
+        JavaClassIdentifier testClass = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("Factory")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build());
+
+        JavaMethodIdentifier targetMethod = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(testClass)
+                        .methodName("create")
+                        .returnType("java.lang.Object")
+                        .build());
+
+        JavaReturnValueIdentifier returnValue = new JavaReturnValueIdentifier(
+                new ReturnValueIdentifierParameters(targetMethod));
+
+        // when
+        DiSLModel model = new DiSLModel(targetMethod, List.of(returnValue));
+        String generatedCode = model.transform();
+
+        // then
+        assertTrue(generatedCode.contains("di.getStackValue(0, java.lang.Object.class)"));
+    }
+
+    // Helper method to count occurrences of a substring
+    private int countOccurrences(String str, String sub) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = str.indexOf(sub, idx)) != -1) {
+            count++;
+            idx += sub.length();
+        }
+        return count;
     }
 }

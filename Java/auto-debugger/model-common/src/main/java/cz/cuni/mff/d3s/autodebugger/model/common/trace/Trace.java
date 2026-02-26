@@ -1,8 +1,10 @@
 package cz.cuni.mff.d3s.autodebugger.model.common.trace;
 
+import java.io.Serializable;
 import java.util.*;
 
-public class Trace {
+public class Trace implements Serializable {
+  private static final long serialVersionUID = 1L;
   private final Map<Integer, Set<Byte>> byteValues = new HashMap<>();
   private final Map<Integer, Set<Character>> charValues = new HashMap<>();
   private final Map<Integer, Set<Short>> shortValues = new HashMap<>();
@@ -11,6 +13,8 @@ public class Trace {
   private final Map<Integer, Set<Float>> floatValues = new HashMap<>();
   private final Map<Integer, Set<Double>> doubleValues = new HashMap<>();
   private final Map<Integer, Set<Boolean>> booleanValues = new HashMap<>();
+  private final Map<Integer, Set<String>> stringValues = new HashMap<>();
+  private final Map<Integer, Set<ObjectSnapshot>> objectValues = new HashMap<>();
 
   public void addByteValue(int slot, byte value) {
     if (byteValues.containsKey(slot)) {
@@ -76,6 +80,22 @@ public class Trace {
     }
   }
 
+  public void addStringValue(int slot, String value) {
+    if (stringValues.containsKey(slot)) {
+      stringValues.get(slot).add(value);
+    } else {
+      stringValues.put(slot, new HashSet<>(List.of(value)));
+    }
+  }
+
+  public void addObjectValue(int slot, ObjectSnapshot value) {
+    if (objectValues.containsKey(slot)) {
+      objectValues.get(slot).add(value);
+    } else {
+      objectValues.put(slot, new HashSet<>(List.of(value)));
+    }
+  }
+
   public Set<Byte> getByteValues(int slot) {
     return byteValues.getOrDefault(slot, Collections.emptySet());
   }
@@ -108,6 +128,14 @@ public class Trace {
     return booleanValues.getOrDefault(slot, Collections.emptySet());
   }
 
+  public Set<String> getStringValues(int slot) {
+    return stringValues.getOrDefault(slot, Collections.emptySet());
+  }
+
+  public Set<ObjectSnapshot> getObjectValues(int slot) {
+    return objectValues.getOrDefault(slot, Collections.emptySet());
+  }
+
   public void printSlotValues() {
     printSlotValues(byteValues);
     printSlotValues(charValues);
@@ -117,6 +145,8 @@ public class Trace {
     printSlotValues(floatValues);
     printSlotValues(doubleValues);
     printSlotValues(booleanValues);
+    printSlotValues(stringValues);
+    printSlotValues(objectValues);
   }
 
   private <T> void printSlotValues(final Map<Integer, Set<T>> slotValues) {

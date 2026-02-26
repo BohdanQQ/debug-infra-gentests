@@ -101,6 +101,50 @@ public class TestGenerationContext {
     @Builder.Default
     private final boolean generateParameterizedTests = true;
 
+    // === Configurable limits for test generation strategies ===
+    // By default, all limits are set to Integer.MAX_VALUE (no limits) to ensure
+    // no test inputs are filtered out. Users can set lower values via CLI if needed.
+
+    /**
+     * Maximum number of argument value combinations to generate.
+     * Used by NaiveTraceBasedGenerator when creating test scenarios from argument values.
+     * Default: Integer.MAX_VALUE (no limit - include all captured combinations).
+     */
+    @Builder.Default
+    private final int maxArgumentCombinations = Integer.MAX_VALUE;
+
+    /**
+     * Maximum number of field value combinations to generate.
+     * Used by NaiveTraceBasedGenerator when creating test scenarios from field values.
+     * Default: Integer.MAX_VALUE (no limit - include all captured combinations).
+     */
+    @Builder.Default
+    private final int maxFieldCombinations = Integer.MAX_VALUE;
+
+    /**
+     * Maximum number of state change samples to capture.
+     * Used by TemporalTraceBasedGenerator when creating scenarios from state changes.
+     * Default: Integer.MAX_VALUE (no limit - include all state changes).
+     */
+    @Builder.Default
+    private final int maxStateChangeSamples = Integer.MAX_VALUE;
+
+    /**
+     * Maximum number of values per variable to include in LLM prompts.
+     * Used by LLMBasedTestGenerator when formatting trace data for the LLM.
+     * Default: Integer.MAX_VALUE (no limit - include all values).
+     */
+    @Builder.Default
+    private final int maxValuesPerVariable = Integer.MAX_VALUE;
+
+    /**
+     * Maximum number of execution scenarios to include in LLM prompts.
+     * Used by LLMBasedTestGenerator when formatting temporal trace data.
+     * Default: Integer.MAX_VALUE (no limit - include all scenarios).
+     */
+    @Builder.Default
+    private final int maxExecutionScenarios = Integer.MAX_VALUE;
+
     // Convenience computed getters
 
     /**

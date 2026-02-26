@@ -1,6 +1,7 @@
 package cz.cuni.mff.d3s.autodebugger.intellijplugin;
 
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase5;
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.intellijplugin.services.OutputService;
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.modelling.InstrumentationModel;
 import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
@@ -22,6 +23,7 @@ public class OrchestratorFlowTest extends LightJavaCodeInsightFixtureTestCase5 {
         Orchestrator orch = Mockito.mock(Orchestrator.class);
         InstrumentationModel model = Mockito.mock(InstrumentationModel.class);
         InstrumentationResult instr = Mockito.mock(InstrumentationResult.class);
+        AnalysisResult analysisResult = Mockito.mock(AnalysisResult.class);
         TestSuite suite = TestSuite.builder().baseDirectory(java.nio.file.Path.of("/tmp"))
                 .build();
         TestExecutionResult testResult = TestExecutionResult.builder().overallStatus(
@@ -30,7 +32,8 @@ public class OrchestratorFlowTest extends LightJavaCodeInsightFixtureTestCase5 {
 
         Mockito.when(orch.buildInstrumentationModel()).thenReturn(model);
         Mockito.when(orch.createInstrumentation(model)).thenReturn(instr);
-        Mockito.when(orch.runAnalysis(instr)).thenReturn(suite);
+        Mockito.when(orch.executeAnalysis(instr)).thenReturn(analysisResult);
+        Mockito.when(orch.generateTests(analysisResult)).thenReturn(suite);
         Mockito.when(orch.runTests(suite)).thenReturn(testResult);
 
         // Execute
@@ -40,7 +43,8 @@ public class OrchestratorFlowTest extends LightJavaCodeInsightFixtureTestCase5 {
         InOrder inOrder = Mockito.inOrder(orch);
         inOrder.verify(orch).buildInstrumentationModel();
         inOrder.verify(orch).createInstrumentation(model);
-        inOrder.verify(orch).runAnalysis(instr);
+        inOrder.verify(orch).executeAnalysis(instr);
+        inOrder.verify(orch).generateTests(analysisResult);
         inOrder.verify(orch).runTests(suite);
 
         // Verify that OutputService received expected phase messages by not throwing; deeper

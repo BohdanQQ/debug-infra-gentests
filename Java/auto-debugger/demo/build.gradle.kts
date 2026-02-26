@@ -60,9 +60,25 @@ tasks.register<Jar>("jarStaticApp") {
     destinationDirectory.set(layout.projectDirectory)
 }
 
+tasks.register<JavaCompile>("compileObjectsApp") {
+    description = "Compile Objects demo app"
+    source = fileTree("apps/objects/src") { include("**/*.java") }
+    destinationDirectory.set(layout.buildDirectory.dir("classes/objects"))
+    options.release.set(21)
+}
+
+tasks.register<Jar>("jarObjectsApp") {
+    description = "Package Objects demo app"
+    dependsOn("compileObjectsApp")
+    archiveFileName.set("objects-app.jar")
+    from(tasks.named<JavaCompile>("compileObjectsApp").get().destinationDirectory)
+    manifest.attributes(mapOf("Main-Class" to "com.example.PersonApp"))
+    destinationDirectory.set(layout.projectDirectory.dir("apps/objects"))
+}
+
 // Aggregate convenience task
 tasks.register("buildDemoApps") {
     description = "Build all demo application jars"
-    dependsOn("jarArgsApp", "jarFieldsApp", "jarStaticApp")
+    dependsOn("jarArgsApp", "jarFieldsApp", "jarStaticApp", "jarObjectsApp")
 }
 

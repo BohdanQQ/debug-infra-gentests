@@ -1,6 +1,5 @@
 package cz.cuni.mff.d3s.autodebugger.runner.config;
 
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -17,7 +16,7 @@ public class ConfigurationProvider {
      * @return List of configuration fields
      */
     public static List<ConfigurationField> getRequiredConfigurationFields() {
-        return Arrays.asList(
+        return List.of(
             new ConfigurationField(
                 "disl.path",
                 "DiSL Path",
@@ -44,7 +43,7 @@ public class ConfigurationProvider {
      * @return List of optional configuration fields
      */
     public static List<ConfigurationField> getOptionalConfigurationFields() {
-        return Arrays.asList(
+        return List.of(
             new ConfigurationField(
                 "output.directory",
                 "Output Directory",

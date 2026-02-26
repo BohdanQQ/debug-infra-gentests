@@ -9,4 +9,7 @@ public class MethodIdentifierParameters {
   public String methodName;
   public String returnType;
   public List<String> parameterTypes;
+
+  @Builder.Default
+  public boolean isStatic = false;
 }

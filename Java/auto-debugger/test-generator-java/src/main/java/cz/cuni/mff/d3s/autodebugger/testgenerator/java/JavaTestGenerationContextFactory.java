@@ -70,6 +70,12 @@ public class JavaTestGenerationContextFactory extends TestGenerationContextFacto
             // No target method available; leave unset (callers should ensure it is provided where required)
         }
 
+        // Apply maxArgumentCombinations if specified in the configuration
+        if (javaConfig.getMaxArgumentCombinations() != null) {
+            builder.maxArgumentCombinations(javaConfig.getMaxArgumentCombinations());
+        }
+        // Otherwise, uses the default Integer.MAX_VALUE from TestGenerationContext
+
         return builder.build();
     }
 

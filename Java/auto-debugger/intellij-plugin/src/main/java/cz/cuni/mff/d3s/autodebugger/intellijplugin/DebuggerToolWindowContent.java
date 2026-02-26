@@ -881,27 +881,9 @@ public class DebuggerToolWindowContent {
                 break;
 
             case "trace-based-advanced":
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_EdgeCase_BoundaryValue()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_MLDetected_UnusualPattern()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_AdvancedScenario_ComplexFlow()");
-                break;
-
-            case "property-based":
-                outputService.print(OutputService.OutputType.TESTS, "Generated property: forAll_inputRange_outputInvariantHolds()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated property: forAll_validInputs_noExceptionThrown()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated property: forAll_operations_idempotencyHolds()");
-                break;
-
-            case "mutation-based":
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_MutatedInput_1_DetectsBehaviorChange()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_MutatedInput_2_VerifiesRobustness()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_BoundaryMutation_HandlesEdgeCases()");
-                break;
-
-            case "symbolic-execution":
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_Path1_ConditionTrue()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_Path2_ConditionFalse()");
-                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_Path3_ExceptionPath()");
+                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_TemporalState_Scenario1()");
+                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_StateEvolution_ComplexFlow()");
+                outputService.print(OutputService.OutputType.TESTS, "Generated test: testMethod_ReconstructedState_EdgeCase()");
                 break;
 
             case "ai-assisted":

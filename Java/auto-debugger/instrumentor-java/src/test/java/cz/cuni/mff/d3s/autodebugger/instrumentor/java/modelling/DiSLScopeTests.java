@@ -16,7 +16,7 @@ class DiSLScopeTests {
 
     // then
     assertEquals(
-        String.format("scope = \"%s.%s\"", Constants.targetClassName, Constants.targetMethodName),
+        String.format("scope = \"%s.%s.%s\"", Constants.packageIdentifier.getPackageName(), Constants.targetClassName, Constants.targetMethodName),
         code);
   }
 }

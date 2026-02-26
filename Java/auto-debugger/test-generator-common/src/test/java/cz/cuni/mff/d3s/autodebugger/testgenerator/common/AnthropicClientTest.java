@@ -145,9 +145,11 @@ class AnthropicClientTest {
     void givenSupportedModelNames_whenValidating_thenAllAreValid() {
         // Test all supported Anthropic model names
         String[] supportedModels = {
+            "claude-sonnet-4-5-20250929",
             "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-20241022",
+            "claude-3-7-sonnet-20250219",
             "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307",
             "mock"
         };
 
@@ -170,8 +172,8 @@ class AnthropicClientTest {
                 .apiKey("test-key")
                 .build();
 
-        // Default model should be the most capable Claude model
-        assertEquals("claude-sonnet-4-20250514", config.getModelName());
+        // Default model should be the most capable Claude model (Sonnet 4.5)
+        assertEquals("claude-sonnet-4-5-20250929", config.getModelName());
 
         // Default temperature should be optimized for code generation (0.3)
         assertEquals(0.3, config.getTemperature(), 0.001);

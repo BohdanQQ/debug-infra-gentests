@@ -8,7 +8,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectOutputStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -52,7 +54,15 @@ class DiSLAnalyzerTest {
         );
 
         instrumentationJarPath = Path.of("/tmp/instrumentation.jar");
-        instrumentation = InstrumentationResult.builder().primaryArtifact(instrumentationJarPath).build();
+        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
+        Path traceFilePath = tempDir.resolve("output/trace.ser");
+        Path identifiersMappingPath = tempDir.resolve("output/identifiers.ser");
+        instrumentation = InstrumentationResult.builder()
+                .primaryArtifact(instrumentationJarPath)
+                .resultsListPath(resultsListPath)
+                .traceFilePath(traceFilePath)
+                .identifiersMappingPath(identifiersMappingPath)
+                .build();
 
         // Standard configuration with runtime arguments
         standardConfig = JavaRunConfiguration.builder()
@@ -96,24 +106,25 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(15, command.size());
+        // Command: python3, disl.py, -d, disl-home, -cse, --, instr.jar, -jar, app.jar, 4 runtime args = 13
+        assertEquals(13, command.size());
 
-        // Verify exact order and content
+        // Verify core command structure
         assertEquals("python3", command.get(0));
         assertEquals("/opt/disl/bin/disl.py", command.get(1));
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/path/to/my-app.jar", command.get(10));
-        assertEquals("--user", command.get(11));
-        assertEquals("test", command.get(12));
-        assertEquals("--mode", command.get(13));
-        assertEquals("fast", command.get(14));
+        assertEquals("--", command.get(5));
+
+        // After "--" comes: instrumentation.jar, -jar, app.jar, runtime args...
+        assertEquals("/tmp/instrumentation.jar", command.get(6));
+        assertEquals("-jar", command.get(7));
+        assertEquals("/path/to/my-app.jar", command.get(8));
+        assertEquals("--user", command.get(9));
+        assertEquals("test", command.get(10));
+        assertEquals("--mode", command.get(11));
+        assertEquals("fast", command.get(12));
     }
 
     @Test
@@ -126,20 +137,19 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(11, command.size());
+        // Command: python3, disl.py, -d, disl-home, -cse, --, instr.jar, -jar, app.jar = 9
+        assertEquals(9, command.size());
 
-        // Verify command up to application jar (no runtime arguments should follow)
+        // Verify core structure
         assertEquals("python3", command.get(0));
         assertEquals("/opt/disl/bin/disl.py", command.get(1));
         assertEquals("-d", command.get(2));
         assertEquals("/opt/disl/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/path/to/my-app.jar", command.get(10));
+        assertEquals("--", command.get(5));
+        assertEquals("/tmp/instrumentation.jar", command.get(6));
+        assertEquals("-jar", command.get(7));
+        assertEquals("/path/to/my-app.jar", command.get(8));
     }
 
     @Test
@@ -152,7 +162,8 @@ class DiSLAnalyzerTest {
 
         // Then
         assertNotNull(command);
-        assertEquals(11, command.size());
+        // Command: python3, disl.py, -d, disl-home, -cse, --, instr.jar, -jar, app.jar = 9
+        assertEquals(9, command.size());
 
         // Verify paths with spaces are correctly represented as single arguments
         assertEquals("python3", command.get(0));
@@ -160,49 +171,111 @@ class DiSLAnalyzerTest {
         assertEquals("-d", command.get(2));
         assertEquals("/opt/DiSL Framework/output", command.get(3));
         assertEquals("-cse", command.get(4));
-        assertEquals("-e_cp", command.get(5));
-        assertEquals("../test-generator-java/build/libs/*:../test-generator-common/build/libs/*:../model-common/build/libs/*:../model-java/build/libs/*", command.get(6));
-        assertEquals("--", command.get(7));
-        assertEquals("/tmp/instrumentation.jar", command.get(8));
-        assertEquals("-jar", command.get(9));
-        assertEquals("/home/user/my app/app.jar", command.get(10));
+        assertEquals("--", command.get(5));
+        assertEquals("/tmp/instrumentation.jar", command.get(6));
+        assertEquals("-jar", command.get(7));
+        assertEquals("/home/user/my app/app.jar", command.get(8));
     }
 
     @Test
-    void givenInvalidInstrumentationPath_whenRunAnalysis_thenThrows() {
+    void givenClasspathEntries_whenBuildExecutionCommand_thenIncludesClasspathOptions() {
+        // Given
+        JavaClassIdentifier classIdentifier = new JavaClassIdentifier(
+                ClassIdentifierParameters.builder()
+                        .className("TestClass")
+                        .packageIdentifier(new JavaPackageIdentifier("com.example"))
+                        .build()
+        );
+
+        JavaMethodIdentifier methodIdentifier = new JavaMethodIdentifier(
+                MethodIdentifierParameters.builder()
+                        .ownerClassIdentifier(classIdentifier)
+                        .methodName("testMethod")
+                        .returnType("void")
+                        .parameterTypes(Arrays.asList("int", "String"))
+                        .build()
+        );
+
+        JavaRunConfiguration configWithClasspath = JavaRunConfiguration.builder()
+                .applicationPath(Path.of("/path/to/my-app.jar"))
+                .sourceCodePath(tempDir.resolve("src"))
+                .dislHomePath(Path.of("/opt/disl"))
+                .outputDirectory(tempDir.resolve("output"))
+                .targetMethod(methodIdentifier)
+                .classpathEntry(Path.of("/path/to/lib1.jar"))
+                .classpathEntry(Path.of("/path/to/lib2.jar"))
+                .build();
+
+        DiSLAnalyzer analyzer = new DiSLAnalyzer(configWithClasspath);
+
+        // When
+        List<String> command = analyzer.buildExecutionCommand(instrumentation.getPrimaryArtifact());
+
+        // Then
+        assertNotNull(command);
+        // Command: python3, disl.py, -d, disl-home, -cse, -c_opts=-cp, -c_opts=classpath, --, instr.jar, -jar, app.jar = 11
+        assertEquals(11, command.size());
+
+        // Verify core command structure
+        assertEquals("python3", command.get(0));
+        assertEquals("/opt/disl/bin/disl.py", command.get(1));
+        assertEquals("-d", command.get(2));
+        assertEquals("/opt/disl/output", command.get(3));
+        assertEquals("-cse", command.get(4));
+
+        // Verify classpath options (uses = sign format for disl.py argparse compatibility)
+        assertEquals("-c_opts=-cp", command.get(5));
+        String expectedClasspath = Path.of("/path/to/lib1.jar").toAbsolutePath().toString() +
+                                   java.io.File.pathSeparator +
+                                   Path.of("/path/to/lib2.jar").toAbsolutePath().toString();
+        assertEquals("-c_opts=" + expectedClasspath, command.get(6));
+
+        // Verify remaining command structure
+        assertEquals("--", command.get(7));
+        assertEquals("/tmp/instrumentation.jar", command.get(8));
+        assertEquals("-jar", command.get(9));
+        assertEquals("/path/to/my-app.jar", command.get(10));
+    }
+
+    @Test
+    void givenInvalidInstrumentationPath_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
         Path nonExistentJar = Path.of("/non/existent/instrumentation.jar");
+        Path resultsListPath = tempDir.resolve("output/generated-tests.lst");
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(nonExistentJar).build());
+            analyzer.executeAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(nonExistentJar)
+                    .resultsListPath(resultsListPath)
+                    .build());
         });
 
         assertTrue(exception.getMessage().contains("does not exist"));
     }
 
     @Test
-    void givenEmptyInstrumentationPaths_whenRunAnalysis_thenThrows() {
+    void givenEmptyInstrumentationPaths_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(null);
+            analyzer.executeAnalysis(null);
         });
 
         assertTrue(exception.getMessage().contains("cannot be null"));
     }
 
     @Test
-    void givenNullInstrumentationPaths_whenRunAnalysis_thenThrows() {
+    void givenNullInstrumentationPaths_whenExecuteAnalysis_thenThrows() {
         // Given
         DiSLAnalyzer analyzer = new DiSLAnalyzer(standardConfig);
 
         // When & Then
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
-            analyzer.runAnalysis(null);
+            analyzer.executeAnalysis(null);
         });
 
         assertTrue(exception.getMessage().contains("cannot be null"));
@@ -213,7 +286,7 @@ class DiSLAnalyzerTest {
      * This test creates a simple executable that simulates DiSL behavior.
      */
     @Test
-    void givenMockInstrumentationJar_whenRunAnalysis_thenHandlesProcessExecution() throws IOException {
+    void givenMockInstrumentationJar_whenExecuteAnalysis_thenHandlesProcessExecution() throws IOException {
         // Given - Create a mock instrumentation jar file
         Path mockInstrumentationJar = tempDir.resolve("mock-instrumentation.jar");
         Files.createFile(mockInstrumentationJar);
@@ -280,15 +353,21 @@ class DiSLAnalyzerTest {
 
         // When & Then - This test demonstrates the structure for testing process execution
         // The test may succeed or fail depending on the system setup, but it should not crash
+        Path traceFilePath = tempDir.resolve("output/trace.ser");
+        Path identifierMappingPath = tempDir.resolve("output/identifiers.ser");
         try {
-            var generated = analyzer.runAnalysis(InstrumentationResult.builder().primaryArtifact(mockInstrumentationJar).build());
+            var result = analyzer.executeAnalysis(InstrumentationResult.builder()
+                    .primaryArtifact(mockInstrumentationJar)
+                    .traceFilePath(traceFilePath)
+                    .identifiersMappingPath(identifierMappingPath)
+                    .build());
 
-            // If it succeeds, we should get a list of generated test paths
-            assertNotNull(generated, "Analysis should return a non-null TestSuite");
-            assertTrue(generated.getTestFiles().size() >= 0, "Generated tests list should be returned");
+            // If it succeeds, we should get an AnalysisResult
+            assertNotNull(result, "Analysis should return a non-null AnalysisResult");
+            assertNotNull(result.getTraceFilePath(), "AnalysisResult should contain trace file path");
 
         } catch (Exception e) {
-            // If it fails, it should be due to process execution issues
+            // If it fails, it should be due to process execution issues or validation failures
             assertNotNull(e);
             System.out.println("Exception caught: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             // The important thing is that we're testing the structure and that it attempts to run the process
@@ -298,7 +377,12 @@ class DiSLAnalyzerTest {
                       e.getMessage().contains("No such file") ||
                       e.getMessage().contains("Cannot run program") ||
                       e.getMessage().contains("does not exist") ||
-                      e.getMessage().contains("Expected JAR file"));  // Common error when command not found
+                      e.getMessage().contains("Expected JAR file") ||
+                      e.getMessage().contains("Trace file path is null") ||
+                      e.getMessage().contains("Trace file not created") ||
+                      e.getMessage().contains("Identifier mapping"));  // Validation error messages
         }
     }
+
+
 }

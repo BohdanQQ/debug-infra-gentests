@@ -28,7 +28,7 @@ class JavaValueCollectorEmissionTests {
         ClassIdentifierParameters.builder().className("C").packageIdentifier(JavaPackageIdentifier.DEFAULT_PACKAGE).build());
     var id = new JavaFieldIdentifier(
         FieldIdentifierParameters.builder().variableName("name").variableType("java.lang.String").ownerClassIdentifier(owner).build());
-    var field = new JavaField("name", owner.getName(), id);
+    var field = new JavaField("name", owner.getName(), id.isStatic(), id);
     String call = field.emitCollectorCode();
     assertTrue(call.contains("collectString("));
   }

@@ -162,7 +162,7 @@ class LLMBasedTestGeneratorTest {
         verify(mockAnthropicClient, atLeastOnce()).generateCode(anyString());
 
         // Verify the generated file exists and contains expected content
-        Path generatedFile = result.get(0);
+        Path generatedFile = result.getFirst();
         assertTrue(Files.exists(generatedFile), "Generated test file should exist");
 
         String fileContent = Files.readString(generatedFile);
@@ -216,7 +216,7 @@ class LLMBasedTestGeneratorTest {
                 .apiKey("test-key")
                 .build();
 
-        assertEquals("claude-sonnet-4-20250514", config.getModelName());
+        assertEquals("claude-sonnet-4-5-20250929", config.getModelName());
 
         assertDoesNotThrow(() -> generator.configure(config));
     }
@@ -307,9 +307,11 @@ class LLMBasedTestGeneratorTest {
     void givenAnthropicModels_whenConfiguring_thenAllModelsAreSupported() {
         // Test Anthropic-specific model configurations
         String[] claudeModels = {
+            "claude-sonnet-4-5-20250929",
             "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022"
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-haiku-20241022",
+            "claude-3-haiku-20240307"
         };
 
         for (String model : claudeModels) {

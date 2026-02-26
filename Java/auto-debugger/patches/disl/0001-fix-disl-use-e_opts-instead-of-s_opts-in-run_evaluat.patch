@@ -1,0 +1,25 @@
+From 59cf5ffa2f3f784449f8cb791adc1fd4a8ea6f7e Mon Sep 17 00:00:00 2001
+From: Denis Leskovar <leskovar.denis@seznam.cz>
+Date: Sun, 7 Dec 2025 15:01:52 +0100
+Subject: [PATCH] fix(disl): use e_opts instead of s_opts in run_evaluation()
+
+---
+ bin/disl.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bin/disl.py b/bin/disl.py
+index 16698224..877c01e8 100755
+--- a/bin/disl.py
++++ b/bin/disl.py
+@@ -452,7 +452,7 @@ def run_evaluation(args, parser):
+ 	e_class = "ch.usi.dag.dislreserver.DiSLREServer"
+ 
+ 	e_cmd = ["java"]
+-	e_cmd+= args.s_opts
++	e_cmd+= args.e_opts
+ 	e_cmd+= ["-Xms1G", "-Xmx2G"]
+ 	e_cmd+= ["-cp", args.instrumentation + ":" + e_jar]
+ 	e_cmd+= [e_class]
+-- 
+2.40.1
+

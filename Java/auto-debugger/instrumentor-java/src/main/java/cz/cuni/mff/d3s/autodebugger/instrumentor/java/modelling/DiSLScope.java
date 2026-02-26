@@ -15,20 +15,24 @@ public class DiSLScope extends Metaclass {
         append("scope = \"");
         // Use fully qualified class name for DiSL scope
         var classIdentifier = methodIdentifier.getOwnerClassIdentifier();
-        append(classIdentifier.getPackageIdentifier().getPackageName());
-        append(".");
+        var packageId = classIdentifier.getPackageIdentifier();
+        if (packageId != null && packageId.getPackageName() != null && !packageId.getPackageName().isEmpty()) {
+            append(packageId.getPackageName());
+            append(".");
+        }
         append(classIdentifier.getName());
         append(".");
         append(methodIdentifier.getName());
 
         // Include parameter types for precise method matching
-        if (!methodIdentifier.getParameterTypes().isEmpty()) {
+        var parameterTypes = methodIdentifier.getParameterTypes();
+        if (parameterTypes != null && !parameterTypes.isEmpty()) {
             append("(");
-            for (int i = 0; i < methodIdentifier.getParameterTypes().size(); i++) {
+            for (int i = 0; i < parameterTypes.size(); i++) {
                 if (i > 0) {
                     append(",");
                 }
-                append(methodIdentifier.getParameterTypes().get(i));
+                append(parameterTypes.get(i));
             }
             append(")");
         }

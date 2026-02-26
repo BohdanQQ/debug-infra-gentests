@@ -16,6 +16,16 @@ public abstract class JavaValue extends Metaclass {
     protected final JavaValueIdentifier exportedValueIdentifier;
     protected final JavaVariableIdentifier instrumentationVariableIdentifier;
 
+    /**
+     * Returns the identifier for the exported value.
+     * Used to determine capture timing and other properties.
+     *
+     * @return the exported value identifier
+     */
+    public JavaValueIdentifier getExportedValueIdentifier() {
+        return exportedValueIdentifier;
+    }
+
     public JavaValue(JavaValueIdentifier exportableValue) {
         this.exportedValueIdentifier = exportableValue;
         var parameters = VariableIdentifierParameters.builder()

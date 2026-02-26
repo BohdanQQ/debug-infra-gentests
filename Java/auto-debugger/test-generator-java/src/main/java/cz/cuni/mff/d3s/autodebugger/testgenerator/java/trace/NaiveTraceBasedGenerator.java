@@ -1,11 +1,13 @@
 package cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace;
 
 import cz.cuni.mff.d3s.autodebugger.model.common.RunConfiguration;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.ObjectSnapshot;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.JavaRunConfiguration;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.common.identifiers.ExportableValue;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaFieldIdentifier;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaMethodIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.common.*;
 import cz.cuni.mff.d3s.autodebugger.testgenerator.java.JavaTestGenerationContextFactory;
@@ -27,6 +29,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
 
     private final Map<Integer, JavaValueIdentifier> identifierMapping;
     private TestGenerationContext context;
+    private Set<String> objectImports = new HashSet<>();
 
     public NaiveTraceBasedGenerator(Map<Integer, JavaValueIdentifier> identifierMapping) {
         this.identifierMapping = identifierMapping;
@@ -110,6 +113,7 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
      */
     public List<Path> generateTests(Trace trace, TestGenerationContext context) {
         this.context = context;
+        this.objectImports = new HashSet<>();  // Reset object imports for each test generation
         String methodSig = context.getTargetMethod() != null
                 ? context.getTargetMethod().getFullyQualifiedSignature()
                 : "UnknownClass.unknownMethod()";
@@ -159,7 +163,9 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 !trace.getDoubleValues(slot).isEmpty() ||
                 !trace.getCharValues(slot).isEmpty() ||
                 !trace.getByteValues(slot).isEmpty() ||
-                !trace.getShortValues(slot).isEmpty()) {
+                !trace.getShortValues(slot).isEmpty() ||
+                !trace.getStringValues(slot).isEmpty() ||
+                !trace.getObjectValues(slot).isEmpty()) {
                 return false; // Found at least one value
             }
         }
@@ -168,11 +174,11 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     
     private List<TestScenario> extractTestScenarios(TraceIdentifierMapper mapper) {
         List<TestScenario> scenarios = new ArrayList<>();
-        
+
         // Get all argument and field identifiers
         Map<Integer, JavaArgumentIdentifier> arguments = new HashMap<>();
         Map<Integer, JavaFieldIdentifier> fields = new HashMap<>();
-        
+
         for (Integer slot : mapper.getSlots()) {
             ExportableValue value = mapper.getExportableValue(slot);
             if (value instanceof JavaArgumentIdentifier arg) {
@@ -181,26 +187,59 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 fields.put(slot, field);
             }
         }
-        
+
         // Create test scenarios based on unique combinations of values
         Set<String> uniqueScenarios = new HashSet<>();
-        
-        // For simplicity, create one scenario per unique combination of argument values
+
         if (!arguments.isEmpty()) {
+            // Create one scenario per unique combination of argument values
             List<Map<Integer, Object>> argumentCombinations = generateArgumentCombinations(arguments, mapper);
-            
+
             for (Map<Integer, Object> argCombo : argumentCombinations) {
                 Map<Integer, Object> fieldCombo = extractFieldValues(fields, mapper);
-                
+
                 String scenarioKey = createScenarioKey(argCombo, fieldCombo);
                 if (!uniqueScenarios.contains(scenarioKey)) {
                     uniqueScenarios.add(scenarioKey);
                     scenarios.add(new TestScenario(argCombo, fieldCombo, scenarios.size() + 1));
                 }
             }
+        } else if (!fields.isEmpty()) {
+            // Field-only scenario: create scenarios based on unique field value combinations
+            List<Map<Integer, Object>> fieldCombinations = generateFieldCombinations(fields, mapper);
+
+            for (Map<Integer, Object> fieldCombo : fieldCombinations) {
+                String scenarioKey = createScenarioKey(new HashMap<>(), fieldCombo);
+                if (!uniqueScenarios.contains(scenarioKey)) {
+                    uniqueScenarios.add(scenarioKey);
+                    scenarios.add(new TestScenario(new HashMap<>(), fieldCombo, scenarios.size() + 1));
+                }
+            }
         }
-        
+
         return scenarios;
+    }
+
+    private List<Map<Integer, Object>> generateFieldCombinations(Map<Integer, JavaFieldIdentifier> fields,
+                                                                 TraceIdentifierMapper mapper) {
+        List<Map<Integer, Object>> combinations = new ArrayList<>();
+
+        // Get all possible values for each field
+        Map<Integer, List<Object>> fieldValues = new HashMap<>();
+        for (Map.Entry<Integer, JavaFieldIdentifier> entry : fields.entrySet()) {
+            Integer slot = entry.getKey();
+            Set<?> values = mapper.getSlotValues(slot);
+            fieldValues.put(slot, new ArrayList<>(values));
+        }
+
+        // Generate combinations (limit configurable via context to avoid explosion)
+        if (!fieldValues.isEmpty()) {
+            List<Integer> slots = new ArrayList<>(fieldValues.keySet());
+            int maxCombinations = context != null ? context.getMaxFieldCombinations() : 20;
+            generateCombinationsRecursive(slots, 0, new HashMap<>(), fieldValues, combinations, maxCombinations);
+        }
+
+        return combinations;
     }
     
     private List<Map<Integer, Object>> generateArgumentCombinations(Map<Integer, JavaArgumentIdentifier> arguments,
@@ -215,10 +254,11 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             argumentValues.put(slot, new ArrayList<>(values));
         }
         
-        // Generate combinations (for now, just take first few unique combinations)
+        // Generate combinations (limit configurable via context)
         if (!argumentValues.isEmpty()) {
             List<Integer> slots = new ArrayList<>(argumentValues.keySet());
-            generateCombinationsRecursive(slots, 0, new HashMap<>(), argumentValues, combinations, 10);
+            int maxCombinations = context != null ? context.getMaxArgumentCombinations() : 10;
+            generateCombinationsRecursive(slots, 0, new HashMap<>(), argumentValues, combinations, maxCombinations);
         }
         
         return combinations;
@@ -275,19 +315,37 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
     }
     
     private String generateTestClass(List<TestScenario> scenarios) {
+        // First, generate all test methods to collect object imports
+        String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
+
+        StringBuilder testMethodsBuilder = new StringBuilder();
+        for (TestScenario scenario : scenarios) {
+            testMethodsBuilder.append(generateTestMethod(scenario, instanceName));
+            testMethodsBuilder.append("\n");
+        }
+        String testMethods = testMethodsBuilder.toString();
+
+        // Now build the complete class with imports
         StringBuilder sb = new StringBuilder();
-        
+
         // Package declaration
         String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         if (pkg != null && !pkg.isEmpty()) {
             sb.append("package ").append(pkg).append(";\n\n");
         }
-        
+
         // Imports
         sb.append("import org.junit.jupiter.api.Test;\n");
         sb.append("import org.junit.jupiter.api.BeforeEach;\n");
-        sb.append("import static org.junit.jupiter.api.Assertions.*;\n\n");
-        
+        sb.append("import static org.junit.jupiter.api.Assertions.*;\n");
+
+        // Add object imports (now populated from test method generation)
+        for (String objectImport : objectImports) {
+            sb.append("import ").append(objectImport).append(";\n");
+        }
+        sb.append("\n");
+
         // Class declaration
         String testClassSig = context.getTargetMethod() != null
                 ? context.getTargetMethod().getFullyQualifiedSignature()
@@ -299,39 +357,37 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         sb.append(" * Generation strategy: Naive Trace-Based\n");
         sb.append(" */\n");
         sb.append("public class ").append(testClassName).append(" {\n\n");
-        
-        // Instance variable for the class under test
-        String targetClass = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String instanceName = targetClass.substring(targetClass.lastIndexOf('.') + 1).toLowerCase();
-        sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
-        
-        // Setup method
-        sb.append("    @BeforeEach\n");
-        sb.append("    void setUp() {\n");
-        sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
-        sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
-        sb.append("    }\n\n");
-        
-        // Generate test methods
-        for (TestScenario scenario : scenarios) {
-            sb.append(generateTestMethod(scenario, instanceName));
-            sb.append("\n");
+
+        // Instance variable for the class under test (skip for static methods)
+        if (!isStaticMethod()) {
+            sb.append("    private ").append(targetClass).append(" ").append(instanceName).append(";\n\n");
+
+            // Setup method
+            sb.append("    @BeforeEach\n");
+            sb.append("    void setUp() {\n");
+            sb.append("        // TODO: Initialize ").append(instanceName).append(" with appropriate constructor\n");
+            sb.append("        // ").append(instanceName).append(" = new ").append(targetClass).append("();\n");
+            sb.append("    }\n\n");
         }
-        
+
+        // Add the pre-generated test methods
+        sb.append(testMethods);
+
         sb.append("}\n");
-        
+
         return sb.toString();
     }
     
     private String generateTestMethod(TestScenario scenario, String instanceName) {
         StringBuilder sb = new StringBuilder();
-        
+
         String methodName = generateTestMethodName(scenario);
-        
+        boolean isVoidMethod = isVoidReturnType();
+
         sb.append("    @Test\n");
         sb.append("    void ").append(methodName).append("() {\n");
         sb.append("        // Arrange\n");
-        
+
         // Set up field values if any
         for (Map.Entry<Integer, Object> field : scenario.fieldValues.entrySet()) {
             ExportableValue fieldId = identifierMapping.get(field.getKey());
@@ -340,21 +396,50 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                   .append(" to ").append(field.getValue()).append("\n");
             }
         }
-        
+
         sb.append("\n        // Act\n");
-        
+
         // Generate method call
-        String methodCall = generateMethodCall(scenario, instanceName);
+        String methodCall = generateMethodCall(scenario, instanceName, isVoidMethod);
         sb.append("        ").append(methodCall).append("\n");
-        
+
         sb.append("\n        // Assert\n");
-        sb.append("        // Basic assertion to verify method execution completed without exception\n");
-        sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
-        sb.append("        // Note: Add more specific assertions based on expected behavior\n");
-        
+        if (isVoidMethod) {
+            sb.append("        // Method returns void - test verifies execution completes without exception\n");
+            sb.append("        // Note: Add assertions to verify side effects (e.g., field changes)\n");
+        } else {
+            sb.append("        // Basic assertion to verify method execution completed without exception\n");
+            sb.append("        assertNotNull(result, \"Method should return a non-null result\");\n");
+            sb.append("        // Note: Add more specific assertions based on expected behavior\n");
+        }
+
         sb.append("    }\n");
-        
+
         return sb.toString();
+    }
+
+    private boolean isVoidReturnType() {
+        if (context.getTargetMethod() == null) {
+            return false;
+        }
+        String returnType = context.getTargetMethod().getReturnType();
+        // Only treat as void when explicitly set to "void"
+        // Unknown return types (null, empty) are treated as non-void for safety
+        return "void".equals(returnType);
+    }
+
+    private boolean isStaticMethod() {
+        if (context.getTargetMethod() instanceof JavaMethodIdentifier javaMethod) {
+            return javaMethod.isStatic();
+        }
+        return false;
+    }
+
+    private String getSimpleClassName() {
+        if (context.getTargetMethod() != null) {
+            return context.getTargetMethod().getClassName();
+        }
+        return "UnknownClass";
     }
     
     private String generateTestMethodName(TestScenario scenario) {
@@ -381,12 +466,16 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
         return name.toString();
     }
     
-    private String generateMethodCall(TestScenario scenario, String instanceName) {
+    private String generateMethodCall(TestScenario scenario, String instanceName, boolean isVoidMethod) {
         String methodName = extractMethodNameFromSignature(context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "unknownMethod");
-        
+
         StringBuilder call = new StringBuilder();
-        call.append("var result = ").append(instanceName).append(".").append(methodName).append("(");
-        
+        if (!isVoidMethod) {
+            call.append("var result = ");
+        }
+        String targetName = isStaticMethod() ? getSimpleClassName() : instanceName;
+        call.append(targetName).append(".").append(methodName).append("(");
+
         // Add arguments in order
         List<String> args = new ArrayList<>();
         for (Map.Entry<Integer, Object> arg : scenario.argumentValues.entrySet()) {
@@ -395,16 +484,18 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
                 args.add(formatValueForCode(arg.getValue()));
             }
         }
-        
+
         call.append(String.join(", ", args));
         call.append(");");
-        
+
         return call.toString();
     }
     
     private String formatValueForCode(Object value) {
         if (value == null) {
             return "null";
+        } else if (value instanceof ObjectSnapshot) {
+            return formatObjectSnapshot((ObjectSnapshot) value);
         } else if (value instanceof String) {
             return "\"" + value.toString().replace("\"", "\\\"") + "\"";
         } else if (value instanceof Character) {
@@ -437,7 +528,108 @@ public class NaiveTraceBasedGenerator implements TestGenerator {
             return value.toString();
         }
     }
-    
+
+    /**
+     * Formats an ObjectSnapshot for code generation.
+     * Generates object construction code with captured field values as constructor arguments.
+     * Note: This assumes a constructor exists that takes the fields in the order they were captured.
+     *
+     * @param snapshot The ObjectSnapshot to format
+     * @return Java code string for object construction
+     */
+    private String formatObjectSnapshot(ObjectSnapshot snapshot) {
+        String className = snapshot.getClassName();
+        String simpleClassName = snapshot.getSimpleClassName();
+
+        // Add import for this class
+        objectImports.add(className);
+
+        StringBuilder code = new StringBuilder();
+        code.append("new ").append(simpleClassName).append("(");
+
+        // Generate constructor arguments from captured field values
+        // Skip special fields like $class, $value, $cycle, $ref
+        Map<String, Object> fields = snapshot.getFields();
+        List<String> fieldNames = new ArrayList<>();
+        List<Object> constructorArgs = new ArrayList<>();
+
+        for (Map.Entry<String, Object> field : fields.entrySet()) {
+            String fieldName = field.getKey();
+            // Skip internal/metadata fields
+            if (fieldName.startsWith("$")) {
+                continue;
+            }
+            fieldNames.add(fieldName);
+            constructorArgs.add(field.getValue());
+        }
+
+        // Generate constructor call with captured values
+        boolean first = true;
+        for (Object arg : constructorArgs) {
+            if (!first) {
+                code.append(", ");
+            }
+            first = false;
+            code.append(formatConstructorArg(arg));
+        }
+
+        code.append(")");
+
+        // Add TODO comment with field names to help verify constructor signature
+        if (!fieldNames.isEmpty()) {
+            code.append(" /* TODO: verify constructor signature matches (");
+            code.append(String.join(", ", fieldNames));
+            code.append(") */");
+        }
+
+        log.debug("Formatted ObjectSnapshot for class {}: {}", className, code);
+        return code.toString();
+    }
+
+    /**
+     * Formats a value as a constructor argument.
+     */
+    private String formatConstructorArg(Object value) {
+        if (value == null) {
+            return "null";
+        } else if (value instanceof ObjectSnapshot nestedSnapshot) {
+            // Recursively format nested objects
+            return formatObjectSnapshot(nestedSnapshot);
+        } else if (value instanceof String) {
+            return "\"" + escapeString((String) value) + "\"";
+        } else if (value instanceof Character) {
+            char c = (Character) value;
+            return switch (c) {
+                case '\n' -> "'\\n'";
+                case '\t' -> "'\\t'";
+                case '\r' -> "'\\r'";
+                case '\\' -> "'\\\\'";
+                case '\'' -> "'\\''";
+                default -> "'" + c + "'";
+            };
+        } else if (value instanceof Long) {
+            return value.toString() + "L";
+        } else if (value instanceof Float) {
+            return value.toString() + "f";
+        } else if (value instanceof Double) {
+            return value.toString() + "d";
+        } else {
+            return value.toString();
+        }
+    }
+
+    /**
+     * Escapes special characters in a string for Java code.
+     */
+    private String escapeString(String s) {
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+
     private Path writeTestFile(String testClassContent) throws IOException {
         String sig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
         String testClassName = extractClassNameFromMethod(sig) + "Test";

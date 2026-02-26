@@ -16,6 +16,14 @@ import java.util.Map;
 @Builder
 @Getter
 public class TestExecutionResult {
+
+    @Override
+    public String toString() {
+        return String.format(
+            "TestExecutionResult{status=%s, passed=%d, failed=%d, skipped=%d, total=%d, duration=%s}",
+            overallStatus, passedCount, failedCount, skippedCount, getTotalTestCount(), totalExecutionTime
+        );
+    }
     
     /**
      * Overall execution status of the test suite.

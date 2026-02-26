@@ -1,5 +1,6 @@
 package cz.cuni.mff.d3s.autodebugger.testgenerator.java.trace;
 
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.ObjectSnapshot;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
@@ -11,10 +12,12 @@ import java.util.function.Function;
 
 @Slf4j
 public class TraceIdentifierMapper {
+    private final Trace trace;
     private final Map<Integer, JavaValueIdentifier> identifierMapping;
     private final Map<String, Function<Integer, Set<?>>> valueGetters;
 
     public TraceIdentifierMapper(Trace trace, Map<Integer, JavaValueIdentifier> identifierMapping) {
+        this.trace = trace;
         this.identifierMapping = identifierMapping;
         this.valueGetters = Map.of(
                 "byte", trace::getByteValues,
@@ -24,7 +27,8 @@ public class TraceIdentifierMapper {
                 "long", trace::getLongValues,
                 "float", trace::getFloatValues,
                 "double", trace::getDoubleValues,
-                "boolean", trace::getBooleanValues
+                "boolean", trace::getBooleanValues,
+                "java.lang.String", trace::getStringValues
         );
     }
 
@@ -46,7 +50,9 @@ public class TraceIdentifierMapper {
         if (getter != null) {
             return getter.apply(slot);
         } else {
-            throw new IllegalArgumentException("Unsupported type: " + type);
+            // For non-primitive types, fall back to object values
+            log.debug("Type '{}' not in primitive valueGetters, checking object values for slot {}", type, slot);
+            return trace.getObjectValues(slot);
         }
     }
 }

@@ -14,6 +14,11 @@ include("analyzer-java")
 include("intellij-plugin")
 include("test-utils")
 
+// Conditionally include demo subproject
+if (settings.extra.has("includeDemo") || providers.gradleProperty("includeDemo").isPresent) {
+    include("demo")
+}
+
 pluginManagement {
     repositories {
         maven("https://oss.sonatype.org/content/repositories/snapshots/")

@@ -12,6 +12,6 @@ public class FieldExportFactory extends ExportableValueFactory {
     }
 
     public JavaField createExportable(JavaFieldIdentifier identifier) {
-        return new JavaField(identifier.getFieldName(), identifier.getOwnerClassIdentifier().getName(), identifier);
+        return new JavaField(identifier.getFieldName(), identifier.getOwnerClassIdentifier().getName(), identifier.isStatic(), identifier);
     }
 }

@@ -254,7 +254,8 @@ class NaiveTraceBasedGeneratorTest {
         String content = Files.readString(generatedFiles.getFirst());
 
         // Verify the method call contains properly formatted literals
-        assertTrue(content.contains("var result = configurator.configure("),
+        // Note: Since returnType is "void", there is no "var result = " prefix
+        assertTrue(content.contains("configurator.configure("),
                   "Should contain method call");
 
         // Verify proper literal formatting (bugs fixed)

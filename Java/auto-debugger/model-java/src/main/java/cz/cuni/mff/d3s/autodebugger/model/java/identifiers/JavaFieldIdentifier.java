@@ -14,6 +14,7 @@ public class JavaFieldIdentifier extends JavaValueIdentifier implements Exportab
     private int internalId;
     private String fieldName;
     private JavaClassIdentifier ownerClassIdentifier;
+    private boolean isStatic;
 
     public JavaFieldIdentifier(FieldIdentifierParameters parameters) {
         super(ValueType.FIELD);
@@ -21,6 +22,7 @@ public class JavaFieldIdentifier extends JavaValueIdentifier implements Exportab
         this.fieldName = parameters.variableName;
         this.ownerClassIdentifier = parameters.ownerClassIdentifier;
         this.type = parameters.variableType;
+        this.isStatic = parameters.isStatic;
     }
 
     @Override

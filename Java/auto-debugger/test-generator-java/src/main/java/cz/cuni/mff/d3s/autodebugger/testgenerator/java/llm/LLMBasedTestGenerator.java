@@ -289,16 +289,16 @@ public class LLMBasedTestGenerator implements TestGenerator {
      * Builds prompt context specifically for TemporalTrace data.
      */
     private LLMPromptContext buildTemporalPromptContext(TemporalTrace trace, String sourceCode, TestGenerationContext context) {
-        String methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
-        String classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
+        var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
+        var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
                 .sourceCode(sourceCode)
                 .targetMethodSignature(methodSig)
                 .targetClassName(classFqcn)
                 .packageName(pkg)
                 .testFramework(context.getTestFramework())
-                .traceData(formatTemporalTraceData(trace))
+                .traceData(formatTemporalTraceData(trace, context))
                 .maxTestCount(context.getMaxTestCount())
                 .generateEdgeCases(context.isGenerateEdgeCases())
                 .generateNegativeTests(context.isGenerateNegativeTests())
@@ -318,9 +318,9 @@ public class LLMBasedTestGenerator implements TestGenerator {
      */
     private LLMPromptContext buildPromptContext(Trace trace, String sourceCode, TestGenerationContext context) {
         log.debug("Using basic trace formatting for LLM prompt");
-        String methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
-        String classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
-        String pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
+        var methodSig = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedSignature() : "UnknownClass.unknownMethod()";
+        var classFqcn = context.getTargetMethod() != null ? context.getTargetMethod().getFullyQualifiedClassName() : "UnknownClass";
+        var pkg = context.getTargetMethod() != null ? context.getTargetMethod().getPackageName() : "";
         return LLMPromptContext.builder()
                 .sourceCode(sourceCode)
                 .targetMethodSignature(methodSig)
@@ -361,8 +361,9 @@ public class LLMBasedTestGenerator implements TestGenerator {
 
     /**
      * Formats TemporalTrace data for LLM consumption with temporal context.
+     * Uses configurable limits from TestGenerationContext.
      */
-    private String formatTemporalTraceData(TemporalTrace trace) {
+    private String formatTemporalTraceData(TemporalTrace trace, TestGenerationContext context) {
         StringBuilder sb = new StringBuilder();
         sb.append("Enhanced Runtime Trace Data with Temporal Information:\n");
         sb.append("// ").append(trace.getSummary().replace("\n", "\n// ")).append("\n\n");
@@ -371,12 +372,15 @@ public class LLMBasedTestGenerator implements TestGenerator {
         Optional<int[]> eventRange = trace.getEventIndexRange();
         eventRange.ifPresent(range -> sb.append("// Execution timeline: events ").append(range[0]).append(" to ").append(range[1]).append("\n\n"));
 
+        // Use configurable limit for values per variable
+        int maxValuesPerVariable = context.getMaxValuesPerVariable();
+
         // Format variable histories
         for (ExportableValue identifier : trace.getTrackedIdentifiers()) {
             sb.append("// Variable: ").append(((JavaValueIdentifier)identifier).getType()).append("\n");
 
             var values = trace.getValues(identifier);
-            if (values.size() <= 10) {
+            if (values.size() <= maxValuesPerVariable) {
                 // Show all values for small histories
                 for (Map.Entry<Integer, Object> entry : values.entrySet()) {
                     sb.append("//   Event ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
@@ -384,12 +388,13 @@ public class LLMBasedTestGenerator implements TestGenerator {
             } else {
                 // Show first few, last few, and summary for large histories
                 var entryList = new ArrayList<>(values.entrySet());
-                for (int i = 0; i < 3; i++) {
+                int showCount = Math.min(3, maxValuesPerVariable / 2);
+                for (int i = 0; i < showCount; i++) {
                     var entry = entryList.get(i);
                     sb.append("//   Event ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
                 }
-                sb.append("//   ... (").append(values.size() - 6).append(" more values) ...\n");
-                for (int i = entryList.size() - 3; i < entryList.size(); i++) {
+                sb.append("//   ... (").append(values.size() - (showCount * 2)).append(" more values) ...\n");
+                for (int i = entryList.size() - showCount; i < entryList.size(); i++) {
                     var entry = entryList.get(i);
                     sb.append("//   Event ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
                 }
@@ -398,9 +403,11 @@ public class LLMBasedTestGenerator implements TestGenerator {
         }
 
         // Add execution scenarios based on state snapshots
+        // Use configurable limit for execution scenarios
+        int maxExecutionScenarios = context.getMaxExecutionScenarios();
         if (eventRange.isPresent()) {
             int[] range = eventRange.get();
-            int sampleCount = Math.min(5, range[1] - range[0] + 1);
+            int sampleCount = Math.min(maxExecutionScenarios, range[1] - range[0] + 1);
             sb.append("// Key execution scenarios:\n");
 
             for (int i = 0; i < sampleCount; i++) {

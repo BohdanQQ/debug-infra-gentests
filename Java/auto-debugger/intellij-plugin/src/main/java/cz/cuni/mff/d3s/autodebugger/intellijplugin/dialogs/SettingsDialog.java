@@ -180,19 +180,12 @@ public class SettingsDialog extends DialogWrapper {
     }
 
     private String getValueFromComponent(JComponent component, ConfigurationField.FieldType type) {
-        switch (type) {
-            case TEXT:
-            case NUMBER:
-                return ((JBTextField) component).getText();
-            case PASSWORD:
-                return new String(((JBPasswordField) component).getPassword());
-            case FILE_PATH:
-            case DIRECTORY_PATH:
-                return ((TextFieldWithBrowseButton) component).getText();
-            case BOOLEAN:
-                return String.valueOf(((JBCheckBox) component).isSelected());
-            default:
-                return "";
-        }
+        return switch (type) {
+            case TEXT, NUMBER -> ((JBTextField) component).getText();
+            case PASSWORD -> new String(((JBPasswordField) component).getPassword());
+            case FILE_PATH, DIRECTORY_PATH -> ((TextFieldWithBrowseButton) component).getText();
+            case BOOLEAN -> String.valueOf(((JBCheckBox) component).isSelected());
+            default -> "";
+        };
     }
 }

@@ -1,9 +1,16 @@
 package cz.cuni.mff.d3s.autodebugger.runner.orchestrator;
 
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.instrumentor.common.modelling.InstrumentationModel;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
+import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
+import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
+import cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -70,9 +77,33 @@ class OrchestratorIIntegrationTest {
         testArguments.runtimeArguments = List.of();
     }
 
-    private void prepareStubResults() throws Exception {
-        java.nio.file.Path outputDir = java.nio.file.Path.of(testArguments.outputDirectory);
-        cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper.writeMinimalStubTestAndResults(outputDir);
+    private void prepareStubResults(InstrumentationResult instrumentation) throws Exception {
+        java.nio.file.Path resultsListPath = instrumentation.getResultsListPath();
+        if (resultsListPath == null) {
+            throw new IllegalStateException("InstrumentationResult must have resultsListPath set");
+        }
+        cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
+    }
+
+    /**
+     * Creates a mock AnalysisResult by writing mock trace and identifier mapping files.
+     * This bypasses the need for DiSL runtime while testing the test generation pipeline.
+     */
+    private AnalysisResult createMockAnalysisResult(InstrumentationResult instrumentation) throws Exception {
+        Path traceFilePath = instrumentation.getTraceFilePath();
+        Path identifierMappingPath = instrumentation.getIdentifiersMappingPath();
+
+        Trace mockTrace = StubResultsHelper.createMinimalMockTrace();
+        StubResultsHelper.writeSerializedTrace(traceFilePath, mockTrace);
+
+        Map<Integer, JavaValueIdentifier> mapping = StubResultsHelper.createMinimalIdentifierMapping();
+        StubResultsHelper.writeSerializedIdentifierMapping(identifierMappingPath, mapping);
+
+        return AnalysisResult.builder()
+            .traceFilePath(traceFilePath)
+            .identifiersMappingPath(identifierMappingPath)
+            .outputDirectory(Path.of(testArguments.outputDirectory))
+            .build();
     }
 
 
@@ -103,15 +134,15 @@ class OrchestratorIIntegrationTest {
         // var testResults = testRunner.runTests(tests);
     }
     @Test
-    void givenStubMode_whenRunningAnalysis_thenProducesFiles() throws Exception {
+    void givenMockTrace_whenGeneratingTests_thenProducesFiles() throws Exception {
         // given
         Orchestrator orchestrator = OrchestratorFactory.create(testArguments);
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults();
+        var analysisResult = createMockAnalysisResult(instrumentation);
 
         // when
-        var testSuite = orchestrator.runAnalysis(instrumentation);
+        var testSuite = orchestrator.generateTests(analysisResult);
         var generated = testSuite.getTestFiles();
 
         // then

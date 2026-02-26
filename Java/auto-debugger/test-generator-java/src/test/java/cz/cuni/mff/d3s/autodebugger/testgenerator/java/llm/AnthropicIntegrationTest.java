@@ -13,14 +13,17 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Integration tests for Anthropic Claude LLM functionality.
  * These tests require actual API keys and are only run when environment variables are set.
+ * Uses claude-3-haiku-20240307 (Haiku 3) - the cheapest model - for all tests.
  */
 class AnthropicIntegrationTest {
+
+    private static final String HAIKU_3_MODEL = "claude-3-haiku-20240307";
 
     @Test
     @EnabledIfEnvironmentVariable(named = "ANTHROPIC_API_KEY", matches = ".+")
     void givenValidApiKey_whenConfiguringAnthropicClient_thenSucceeds() {
         LLMConfiguration config = LLMConfiguration.builder()
-                .modelName("claude-sonnet-4-20250514")
+                .modelName(HAIKU_3_MODEL)
                 .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                 .maxTokens(1000)
                 .temperature(0.7)
@@ -35,7 +38,7 @@ class AnthropicIntegrationTest {
     @EnabledIfEnvironmentVariable(named = "ANTHROPIC_API_KEY", matches = ".+")
     void givenValidConfiguration_whenGeneratingCodeWithAnthropic_thenReturnsValidCode() throws Exception {
         LLMConfiguration config = LLMConfiguration.builder()
-                .modelName("claude-sonnet-4-20250514")
+                .modelName(HAIKU_3_MODEL)
                 .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                 .maxTokens(2000)
                 .temperature(0.3)
@@ -94,7 +97,7 @@ class AnthropicIntegrationTest {
         // Only test this if ANTHROPIC_API_KEY environment variable is not set
         if (System.getenv("ANTHROPIC_API_KEY") == null) {
             LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName("claude-sonnet-4-20250514")
+                    .modelName(HAIKU_3_MODEL)
                     .apiKey(null) // Missing API key
                     .build();
 
@@ -108,7 +111,7 @@ class AnthropicIntegrationTest {
         String originalApiKey = System.getenv("ANTHROPIC_API_KEY");
 
         LLMConfiguration config = LLMConfiguration.builder()
-                .modelName("claude-sonnet-4-20250514")
+                .modelName(HAIKU_3_MODEL)
                 .apiKey(null)
                 .build();
 
@@ -135,34 +138,25 @@ class AnthropicIntegrationTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "ANTHROPIC_API_KEY", matches = ".+")
-    void givenDifferentClaudeModels_whenGeneratingCode_thenAllModelsWork() throws Exception {
-        String[] models = {
-            "claude-sonnet-4-20250514",
-            "claude-3-5-sonnet-20241022",
-            "claude-3-5-haiku-20241022"
-        };
+    void givenHaiku3Model_whenGeneratingCode_thenReturnsValidResponse() throws Exception {
+        LLMConfiguration config = LLMConfiguration.builder()
+                .modelName(HAIKU_3_MODEL)
+                .apiKey(System.getenv("ANTHROPIC_API_KEY"))
+                .maxTokens(500)
+                .temperature(0.1)
+                .build();
 
-        for (String model : models) {
-            LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName(model)
-                    .apiKey(System.getenv("ANTHROPIC_API_KEY"))
-                    .maxTokens(500)
-                    .temperature(0.1)
-                    .build();
+        AnthropicClient client = new AnthropicClient();
+        client.configure(config);
 
-            AnthropicClient client = new AnthropicClient();
-            client.configure(config);
+        String prompt = "Generate a simple JUnit test method that tests 2 + 2 = 4";
+        String response = client.generateCode(prompt);
 
-            String prompt = "Generate a simple JUnit test method that tests 2 + 2 = 4";
-            String response = client.generateCode(prompt);
+        assertNotNull(response, "Response should not be null");
+        assertFalse(response.trim().isEmpty(), "Response should not be empty");
 
-            assertNotNull(response, "Response should not be null for model: " + model);
-            assertFalse(response.trim().isEmpty(), "Response should not be empty for model: " + model);
-            
-            System.out.println("Model: " + model);
-            System.out.println("Response length: " + response.length());
-            System.out.println("---");
-        }
+        System.out.println("Model: " + HAIKU_3_MODEL);
+        System.out.println("Response length: " + response.length());
     }
 
     @Test
@@ -173,7 +167,7 @@ class AnthropicIntegrationTest {
 
         for (double temp : temperatures) {
             LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName("claude-sonnet-4-20250514")
+                    .modelName(HAIKU_3_MODEL)
                     .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                     .maxTokens(1000)
                     .temperature(temp)
@@ -204,7 +198,7 @@ class AnthropicIntegrationTest {
 
         for (int maxTokens : tokenLimits) {
             LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName("claude-sonnet-4-20250514")
+                    .modelName(HAIKU_3_MODEL)
                     .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                     .maxTokens(maxTokens)
                     .temperature(0.2)
@@ -229,7 +223,7 @@ class AnthropicIntegrationTest {
         String envApiKey = System.getenv("ANTHROPIC_API_KEY");
         if (envApiKey != null && !envApiKey.trim().isEmpty()) {
             LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName("claude-sonnet-4-20250514")
+                    .modelName(HAIKU_3_MODEL)
                     .apiKey(null) // No explicit API key - should use env var
                     .build();
 

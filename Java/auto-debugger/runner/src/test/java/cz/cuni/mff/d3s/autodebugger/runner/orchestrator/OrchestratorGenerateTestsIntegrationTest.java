@@ -1,6 +1,8 @@
 package cz.cuni.mff.d3s.autodebugger.runner.orchestrator;
 
+import cz.cuni.mff.d3s.autodebugger.analyzer.common.AnalysisResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.TargetLanguage;
+import cz.cuni.mff.d3s.autodebugger.model.common.artifacts.InstrumentationResult;
 import cz.cuni.mff.d3s.autodebugger.model.common.trace.Trace;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.ArgumentIdentifierParameters;
 import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaArgumentIdentifier;
@@ -8,12 +10,11 @@ import cz.cuni.mff.d3s.autodebugger.model.java.identifiers.JavaValueIdentifier;
 import cz.cuni.mff.d3s.autodebugger.runner.args.Arguments;
 import cz.cuni.mff.d3s.autodebugger.testutils.StubResultsHelper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 
-import javax.tools.JavaCompiler;
-import javax.tools.ToolProvider;
 import java.io.FileOutputStream;
 import java.io.ObjectOutputStream;
 import java.nio.file.Files;
@@ -41,8 +42,34 @@ class OrchestratorGenerateTestsIntegrationTest {
     private Path sourceCodePath;
     private Path outputDir;
 
-    private void prepareStubResults(Path outDir) throws Exception {
-        StubResultsHelper.writeMinimalStubTestAndResults(outDir);
+    private void prepareStubResults(InstrumentationResult instrumentation) throws Exception {
+        // Get the resultsListPath from the instrumentation
+        Path resultsListPath = instrumentation.getResultsListPath();
+        if (resultsListPath == null) {
+            throw new IllegalStateException("InstrumentationResult must have resultsListPath set");
+        }
+        StubResultsHelper.writeMinimalStubTestAndResults(resultsListPath);
+    }
+
+    /**
+     * Creates a mock AnalysisResult by writing mock trace and identifier mapping files.
+     * This bypasses the need for DiSL runtime while testing the test generation pipeline.
+     */
+    private AnalysisResult createMockAnalysisResult(InstrumentationResult instrumentation) throws Exception {
+        Path traceFilePath = instrumentation.getTraceFilePath();
+        Path identifierMappingPath = instrumentation.getIdentifiersMappingPath();
+
+        Trace mockTrace = StubResultsHelper.createMinimalMockTrace();
+        StubResultsHelper.writeSerializedTrace(traceFilePath, mockTrace);
+
+        Map<Integer, JavaValueIdentifier> mapping = StubResultsHelper.createMinimalIdentifierMapping();
+        StubResultsHelper.writeSerializedIdentifierMapping(identifierMappingPath, mapping);
+
+        return AnalysisResult.builder()
+            .traceFilePath(traceFilePath)
+            .identifiersMappingPath(identifierMappingPath)
+            .outputDirectory(outputDir)
+            .build();
     }
 
     @BeforeEach
@@ -75,7 +102,7 @@ class OrchestratorGenerateTestsIntegrationTest {
         createMockTraceAndMapping();
 
         // Create orchestrator with test configuration
-        Arguments args = createTestArguments(appJar, outputDir, dislHome);
+        Arguments args = createTestArguments(appJar, dislHome);
         args.outputDirectory = outputDir.toString();
         orchestrator = new Orchestrator(args);
     }
@@ -86,16 +113,15 @@ class OrchestratorGenerateTestsIntegrationTest {
      * from a mock trace using the trace-based-basic strategy.
      */
     @Test
-    void givenTraceBasedStrategy_whenRunAnalysis_thenGeneratesCompilableTests() throws Exception {
+    void givenTraceBasedStrategy_whenGenerateTests_thenGeneratesCompilableTests() throws Exception {
         // given - orchestrator configured with trace-based-basic strategy
         // (already set up in setUp method)
 
         // when - run analysis to generate tests
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        // Pre-create stub results to satisfy non-empty contract since we don't run a real DiSL
-        prepareStubResults(outputDir);
-        var testSuite = orchestrator.runAnalysis(instrumentation);
+        var analysisResult = createMockAnalysisResult(instrumentation);
+        var testSuite = orchestrator.generateTests(analysisResult);
         var generatedFiles = testSuite.getTestFiles();
         assertFalse(generatedFiles.isEmpty(), "In stub mode, some files should be generated");
         for (Path testFile : generatedFiles) {
@@ -140,7 +166,7 @@ class OrchestratorGenerateTestsIntegrationTest {
                       "Should contain a class declaration");
 
             // Basic validation that it's a Java test file
-            assertTrue(content.trim().length() > 0, "Generated file should not be empty");
+            assertFalse(content.trim().isEmpty(), "Generated file should not be empty");
             assertTrue(content.contains("import"), "Should contain import statements");
             assertTrue(content.contains("void"), "Should contain test methods");
         }
@@ -156,8 +182,7 @@ class OrchestratorGenerateTestsIntegrationTest {
     void givenAiAssistedStrategy_whenCreatingOrchestrator_thenSucceeds() throws Exception {
         // given - orchestrator configured with ai-assisted strategy
         Arguments args = createTestArguments(tempDir.resolve("app.jar"),
-                                           tempDir.resolve("output"),
-                                           tempDir.resolve("disl"));
+                tempDir.resolve("disl"));
         args.outputDirectory = tempDir.resolve("output").toString();
         args.testGenerationStrategy = "ai-assisted";
         args.apiKey = "test-api-key"; // Mock API key
@@ -183,12 +208,12 @@ class OrchestratorGenerateTestsIntegrationTest {
      * Note: Full compilation may fail due to missing dependencies, but syntax should be valid.
      */
     @Test
-    void givenGeneratedTests_whenValidatingSyntax_thenAreWellFormed() throws Exception {
+    void givenMockTrace_whenValidatingSyntax_thenAreWellFormed() throws Exception {
         // given - orchestrator configured with trace-based strategy
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults(outputDir);
-        var generatedFiles = orchestrator.runAnalysis(instrumentation).getTestFiles();
+        var analysisResult = createMockAnalysisResult(instrumentation);
+        var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
 
@@ -234,12 +259,12 @@ class OrchestratorGenerateTestsIntegrationTest {
      * Provides comprehensive validation of generated test content beyond basic string checks.
      */
     @Test
-    void givenGeneratedTests_whenValidatingContent_thenContainExpectedElements() throws Exception {
+    void givenMockTrace_whenValidatingContent_thenContainExpectedElements() throws Exception {
         // given - orchestrator with trace-based strategy
         var model = orchestrator.buildInstrumentationModel();
         var instrumentation = orchestrator.createInstrumentation(model);
-        prepareStubResults(outputDir);
-        var generatedFiles = orchestrator.runAnalysis(instrumentation).getTestFiles();
+        var analysisResult = createMockAnalysisResult(instrumentation);
+        var generatedFiles = orchestrator.generateTests(analysisResult).getTestFiles();
 
         assertFalse(generatedFiles.isEmpty());
 
@@ -285,8 +310,7 @@ class OrchestratorGenerateTestsIntegrationTest {
     void givenInvalidStrategy_whenCreatingOrchestrator_thenThrows() throws Exception {
         // given - orchestrator configured with invalid strategy
         Arguments args = createTestArguments(tempDir.resolve("app.jar"),
-                                           tempDir.resolve("output"),
-                                           tempDir.resolve("disl"));
+                tempDir.resolve("disl"));
         args.outputDirectory = tempDir.resolve("output").toString();
         args.testGenerationStrategy = "non-existent-strategy";
 
@@ -347,7 +371,7 @@ class OrchestratorGenerateTestsIntegrationTest {
         }
     }
 
-    private Arguments createTestArguments(Path appJar, Path outputDir, Path dislHome) {
+    private Arguments createTestArguments(Path appJar, Path dislHome) {
         Arguments args = new Arguments();
         args.language = TargetLanguage.JAVA;
         args.applicationJarPath = appJar.toString();
@@ -360,38 +384,5 @@ class OrchestratorGenerateTestsIntegrationTest {
         args.targetFields = List.of();
         args.runtimeArguments = List.of();
         return args;
-    }
-
-    /**
-     * Helper method to compile a Java file and verify it compiles successfully.
-     * This provides basic compilation verification for generated test files.
-     *
-     * @param javaFile Path to the Java file to compile
-     * @return true if compilation succeeds, false otherwise
-     */
-    private boolean compileJavaFile(Path javaFile) {
-        try {
-            JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-            if (compiler == null) {
-                // If no compiler is available, skip compilation test but don't fail
-                System.out.println("Warning: No Java compiler available, skipping compilation test");
-                return true;
-            }
-
-            // Create a temporary directory for compiled classes
-            Path compilationDir = tempDir.resolve("compiled");
-            Files.createDirectories(compilationDir);
-
-            // Compile the file
-            int result = compiler.run(null, null, null,
-                "-cp", System.getProperty("java.class.path"),
-                "-d", compilationDir.toString(),
-                javaFile.toString());
-
-            return result == 0; // 0 indicates successful compilation
-        } catch (Exception e) {
-            System.err.println("Compilation failed with exception: " + e.getMessage());
-            return false;
-        }
     }
 }

@@ -1,0 +1,13 @@
+diff --git a/src-shvm-agent/Makefile b/src-shvm-agent/Makefile
+index 7d77c54e..45b27d6e 100644
+--- a/src-shvm-agent/Makefile
++++ b/src-shvm-agent/Makefile
+@@ -85,7 +85,7 @@ CFLAGS_LD += -shared
+ #
+ ifneq (MinGW,$(TARGET_ENV))
+     CFLAGS += -fPIC
+-    LIBS += -lpthread
++    #LIBS += -lpthread
+ endif
+ 
+ # JNI and JVMTI includes

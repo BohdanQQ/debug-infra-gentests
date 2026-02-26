@@ -25,7 +25,7 @@ public final class RunnerArgumentsBuilder {
             String testGenerationStrategy,
             String apiKey
     ) {
-        Arguments args = new Arguments();
+        var args = new Arguments();
         args.language = TargetLanguage.JAVA;
         args.applicationJarPath = applicationJarPath;
         args.sourceCodePath = sourceCodePath;

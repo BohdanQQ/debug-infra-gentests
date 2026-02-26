@@ -24,8 +24,12 @@ dependencies {
     testImplementation(project(mapOf("path" to ":analyzer-java")))
     testImplementation(project(mapOf("path" to ":test-generator-common")))
     testImplementation(project(mapOf("path" to ":test-generator-java")))
+    testImplementation(project(":test-utils"))
+    testImplementation(project(":runner"))
 }
 
 tasks.test {
     useJUnitPlatform()
+    // Run tests sequentially to avoid DiSL server port conflicts
+    maxParallelForks = 1
 }

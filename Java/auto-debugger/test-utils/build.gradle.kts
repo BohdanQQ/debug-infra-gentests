@@ -10,6 +10,8 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":model-common"))
+    implementation(project(":model-java"))
     implementation(platform(libs.junit.bom))
     implementation("org.junit.jupiter:junit-jupiter-api")
     implementation("org.junit.jupiter:junit-jupiter-engine")
