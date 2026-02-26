@@ -47,6 +47,8 @@ RUN make -j $(nproc)
 
 # Hook library
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
+RUN dnf install -y protobuf-compiler protobuf protobuf-devel
+RUN protoc --cpp_out=./ ./protobuf/proto/main.proto 
 RUN cmake ./
 RUN make -j $(nproc)
 
@@ -76,7 +78,7 @@ COPY --from=BUILD /usr/local/ /usr/local/
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 # clang, etc for C & C++ standard library
-RUN dnf install -y make cmake clang clang++ && dnf clean all -y
+RUN dnf install -y make cmake clang clang++ protobuf-compiler protobuf protobuf-devel && dnf clean all -y
 # improvement: can we limit this copy to LLVM only?
 COPY --from=BUILD /opt/llcap/debug-infra-gentests/* /opt/llcap/debug-infra-gentests/LLVM
 
