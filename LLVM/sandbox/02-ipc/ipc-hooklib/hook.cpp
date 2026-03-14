@@ -201,7 +201,8 @@ static uint16_t get_tag(EMsgEnd end_type) {
 static bool send_test_end_message(uint64_t index, EMsgEnd end_type,
                                   int32_t status) {
   uint16_t tag = get_tag(end_type);
-  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_END, get_thread_lid(), index, tag, status);
+  auto message = make_message<CLI_MSG_SIZE>(TAG_TEST_END, get_thread_lid(),
+                                            index, tag, status);
   return do_srv_send(message, "test end msg");
 }
 
@@ -400,12 +401,13 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
   if (mt_compat_testing()) {
     void *packet_ptr = nullptr;
     uint32_t packet_size = 0;
-    // in this mode, the test_count is the actual index of the test to request
-    // from the server
-    if (!request_packet_from_server(test_count(), &packet_ptr, &packet_size)) {
+    // the index we'll be fetching from the llcap-server
+    auto idx = arg_pkt_index_to_fetch();
+
+    if (!request_packet_from_server(idx, &packet_ptr, &packet_size)) {
       std::cerr << std::format(
                        "Packet request failed with idx {0}, received size {1}",
-                       test_count(), packet_size)
+                       idx, packet_size)
                 << std::endl;
       std::exit(HOOKLIB_EC_RECV_PKT);
     }
@@ -415,7 +417,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                                        static_cast<int>(packet_size))) {
       std::cerr << std::format("Packet init failed with idx {0}, received size "
                                "{1}, packet ptr {2}",
-                               test_count(), packet_size, packet_ptr)
+                               idx, packet_size, packet_ptr)
                 << std::endl;
       std::exit(HOOKLIB_EC_PAIR);
     }
@@ -483,11 +485,13 @@ thread_local google::protobuf::Arena s_arena;
 // the hook_arg_preamble and hook_arg_epilogue
 // use this mutex to ensure no other argument instrumentation is taking place
 // Note: the current implementation guarantees the thread
-// that is permitted to enter hook_arg_preamble is the only one (by keeping a a unique logical ID
-// per thread) and thus this mutex is "paranoid" in argument tracing mode
+// that is permitted to enter hook_arg_preamble is the only one (by keeping a a
+// unique logical ID per thread) and thus this mutex is "paranoid" in argument
+// tracing mode
 
-// # in call tracing, the mutex is used to make the pair (Module ID, Function ID) transferred
-// atomically without interleavings with other threads' ID transfers
+// # in call tracing, the mutex is used to make the pair (Module ID, Function
+// ID) transferred atomically without interleavings with other threads' ID
+// transfers
 std::mutex s_data_push_mutex;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
@@ -628,7 +632,8 @@ void hook_test_epilogue_exc(uint32_t module_id, uint32_t fn_id) {
 // A simple debugging utility copied from StackOverflow
 // that creates a stringview of a type
 //
-// source: https://stackoverflow.com/questions/81870/is-it-possible-to-print-the-name-of-a-variables-type-in-standard-c
+// source:
+// https://stackoverflow.com/questions/81870/is-it-possible-to-print-the-name-of-a-variables-type-in-standard-c
 template <class T> constexpr static std::string_view type_name() {
   using std::string_view;
 #ifdef __clang__

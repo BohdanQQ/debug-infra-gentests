@@ -60,6 +60,9 @@ uint16_t get_test_tout_secs(void);
 bool should_hijack_arg(void);
 // number of tests to perform (i.e. number of argument packets available)
 uint32_t test_count(void);
+// the argument packet index that is to be fetched from the llcap-server
+// available only in the MT support mode (mt_compat_testing() is true)
+uint32_t arg_pkt_index_to_fetch(void);
 // if true, the module id and function id of this funciton corresponds to the
 // llcap-server's target function
 bool is_fn_under_test(uint32_t mod, uint32_t fn);

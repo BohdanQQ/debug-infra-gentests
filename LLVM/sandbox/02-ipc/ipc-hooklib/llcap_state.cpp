@@ -124,7 +124,6 @@ uint64_t get_thread_lid() {
   return id;
 }
 
-
 // Encapsulates the querying over call counts in the multithreaded-support mode
 // only one global instance shall exist
 class CallCounter {
@@ -278,6 +277,11 @@ uint16_t get_test_tout_secs(void) {
   return in_testing_mode() ? s_buff_info.test_timeout_seconds : 0;
 }
 uint32_t test_count(void) { return s_buff_info.test_count; }
+
+uint32_t arg_pkt_index_to_fetch(void) {
+  /* this field access is intentional despite the name */
+  return s_buff_info.test_count;
+}
 
 void set_fork_flag(void) { s_buff_info.forked = 1; }
 
