@@ -1,4 +1,5 @@
 #include "llcap_state.h"
+#include "checkpoint.hpp"
 #include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
@@ -23,7 +24,7 @@
 #ifdef DEBUG
 constexpr bool DBG = true;
 #else
-constexpr bool DBG = true;
+constexpr bool DBG = false;
 #endif
 
 constexpr int ID_FAILURE{229};
@@ -58,28 +59,30 @@ static bool populate_static_metadata(const void *source, uint32_t size) {
                  sizeof(s_buff_info));
     return false;
   }
-  std::print("Mode: ");
-  switch (s_buff_info.mode) {
-  case 0:
-    std::println("call trace");
-    break;
-  case 1:
-    std::println("argument capture");
-    break;
-  case 2:
-    std::println("testing");
-    break;
-  case 3:
-    std::println("testing - MT compat");
-    break;
-  default:
-    std::println("{}", s_buff_info.mode);
-  }
 
   if constexpr (DBG) {
+    std::print("Mode: ");
+    switch (s_buff_info.mode) {
+    case 0:
+      std::println("call trace");
+      break;
+    case 1:
+      std::println("argument capture");
+      break;
+    case 2:
+      std::println("testing");
+      break;
+    case 3:
+      std::println("testing - MT compat");
+      break;
+    default:
+      std::println("{}", s_buff_info.mode);
+    }
+
     std::println("Thread count: {} {} {}", s_buff_info.thread_count, expected,
                  size);
   }
+
   for (uint32_t i = 0; i < expected; ++i) {
     if (i == s_buff_info.target_thread_lid) {
       s_thread_counts.push_back(s_buff_info.target_call_number);
@@ -87,6 +90,7 @@ static bool populate_static_metadata(const void *source, uint32_t size) {
       s_thread_counts.push_back(0);
     }
   }
+
   return true;
 }
 
@@ -268,6 +272,29 @@ void deinit(void) {
 
 bool in_testing_mode(void) {
   return s_buff_info.mode == 2 || s_buff_info.mode == 3;
+}
+
+// TODO
+bool shall_perform_checkpoint() { return false; }
+
+bool perform_checkpoint() {
+  // TODO - test
+  // normally, we would like to "deinitialize" every single shared resource
+  // (e.g. the shared memory mapping)
+  // but since checkpointing is a testing-only feature and we don't use 
+  // shared memory (after initialization) in the testing phase, we don't need to
+  // do anything here
+  auto rv = performCheckpoint(s_buff_info.checkpoint_dump_dir,
+                              s_buff_info.checkpoint_id);
+  if (!rv) {
+    std::println(std::cerr, "Checkpoint failure: {}", rv.error());
+    return false;
+  }
+
+  // likewise, as we did not deinit anything, we don't need to reinit anything
+  // server connectino will be established as per our normal testing protocol
+
+  return true;
 }
 
 bool mt_compat_testing() { return s_buff_info.mode == 3; }

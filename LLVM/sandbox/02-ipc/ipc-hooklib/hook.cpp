@@ -44,6 +44,7 @@
 #define HOOKLIB_EC_TX_END 239
 #define HOOKLIB_EC_TX_FIN 240
 #define HOOKLIB_EC_IMPL 241
+#define HOOKLIB_EC_CHCKPNT 242
 
 static int s_server_socket = -1;
 
@@ -85,6 +86,9 @@ static bool connect_to_server(const char *path) {
   // the bitcast checks (at compile time) that pid_t fits the array
   auto pid_bytes = std::bit_cast<std::array<char, 4>>(getpid());
 
+  // sends this process' PID so that llcap-server can monitor it
+  // (this is usually done by the "test coordinator", execpt in the MT support
+  // mode)
   return do_srv_send(pid_bytes, "Connect - PID");
 }
 
@@ -105,32 +109,38 @@ static bool do_srv_recv(void *target, size_t size, const char *desc) {
   return true;
 }
 
-template <size_t OutSz, size_t InSz>
-static void copy_into_impl(Arr<char, OutSz> &target, size_t shift,
+template <size_t Shift, size_t OutSz, size_t InSz>
+static void copy_into_impl(Arr<char, OutSz> &target,
                            const std::array<char, InSz> &in) {
   namespace rang = std::ranges;
-  rang::copy(in, target.begin() + shift);
+  static_assert(Shift + InSz <= OutSz, "Target overflow (1)");
+  rang::copy(in, target.begin() + Shift);
 }
 
-template <size_t OutSz, size_t InSz, size_t... InSzS>
-static void copy_into_impl(std::array<char, OutSz> &target, size_t shift,
+template <size_t Shift, size_t OutSz, size_t InSz, size_t... InSzS>
+static void copy_into_impl(std::array<char, OutSz> &target,
                            const std::array<char, InSz> &in,
                            const std::array<char, InSzS> &...others) {
-  copy_into_impl(target, shift, in);
-  copy_into_impl(target, shift + in.size(), others...);
+  constexpr auto NEXT_SHIFT = Shift + in.size();
+  static_assert(OutSz > NEXT_SHIFT, "Target overflow (...)");
+  copy_into_impl<Shift>(target, in);
+  copy_into_impl<NEXT_SHIFT>(target, others...);
 }
 
+// recursively add "vals" into the target, checking their size
 template <size_t OutSz, typename... InS>
 static void copy_into(std::array<char, OutSz> &target, InS... vals) {
   static_assert(target.size() >= (sizeof(vals) + ...),
                 "values must fit the target");
-  copy_into_impl(target, 0ULL, std::bit_cast<Arr<char, sizeof(vals)>>(vals)...);
+  copy_into_impl<0UZ>(target, std::bit_cast<Arr<char, sizeof(vals)>>(vals)...);
 }
 
+// creates a compile-time-checked "mesasge" (bytes) of certain size.
+// The compile time checks ensure that the vals do in fact fit into the OutSz size
+// of the returned message (via sizeof)
 template <size_t OutSz, typename... InS>
 static Arr<char, OutSz> make_message(InS... vals) {
   Arr<char, OutSz> result{'\0'};
-  ;
   copy_into(result, vals...);
   return result;
 }
@@ -148,6 +158,8 @@ static T take_into(const std::array<char, InS> &in) {
   std::ranges::copy(in | std::views::take(sizeof(T)), tArr.begin());
   return std::bit_cast<T>(tArr);
 }
+
+// TODO: index in checkpointing mode... ignore and force response on the llcap-server?
 
 // regardless of return type, the target must be freed by caller
 static bool request_packet_from_server(uint64_t index, void **target,
@@ -380,8 +392,22 @@ static EMsgEnd serve_for_other_until_end(int test_requests_socket, pid_t pid,
   }
 }
 
-static void perform_testing(uint32_t module_id, uint32_t function_id,
-                            uint32_t call_idx) {
+// *_setup functions shall terminate the program on failure
+
+// sets up the server connection
+static void pre_test_setup(uint32_t module_id, uint32_t function_id,
+                           uint32_t call_idx) {
+  if (shall_perform_checkpoint()) {
+    if (!perform_checkpoint()) {
+      std::cerr << "Failed to checkpoint" << std::endl;
+      std::exit(HOOKLIB_EC_CHCKPNT);
+    }
+  }
+  // we shall end up here after a restoration
+  // -> since restore is performed by the llcap-server, we can expect that
+  // "everything is the same" and we can just connect to the llcap-server
+  // "normally"
+
   if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
     std::exit(HOOKLIB_EC_CONN);
@@ -391,6 +417,38 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
     std::cerr << "Failed send start message" << std::endl;
     std::exit(HOOKLIB_EC_START);
   }
+}
+
+// sets up the testing environment for the MT support mode testing
+static void multithread_test_setup() {
+  void *packet_ptr = nullptr;
+  uint32_t packet_size = 0;
+  // the index we'll be fetching from the llcap-server
+  auto idx = arg_pkt_index_to_fetch();
+
+  if (!request_packet_from_server(idx, &packet_ptr, &packet_size)) {
+    std::cerr << std::format(
+                     "Packet request failed with idx {0}, received size {1}",
+                     idx, packet_size)
+              << std::endl;
+    std::exit(HOOKLIB_EC_RECV_PKT);
+  }
+
+  if (packet_ptr == nullptr || !locally_initialize_arg_packet(
+                                   packet_ptr, static_cast<int>(packet_size))) {
+    std::cerr << std::format("Packet init failed with idx {0}, received size "
+                             "{1}, packet ptr {2}",
+                             idx, packet_size, packet_ptr)
+              << std::endl;
+    std::exit(HOOKLIB_EC_PAIR);
+  }
+}
+
+static void perform_testing(uint32_t module_id, uint32_t function_id,
+                            uint32_t call_idx) {
+  // *_setup functions terminate the program on failure
+
+  pre_test_setup(module_id, function_id, call_idx);
 
   set_fork_flag(); // setting the flag in both parent and the fork should not
                    // matter, this function never returns in the fork's parent
@@ -399,28 +457,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // but the behavior should remain the same (call counts, ...)
 
   if (mt_compat_testing()) {
-    void *packet_ptr = nullptr;
-    uint32_t packet_size = 0;
-    // the index we'll be fetching from the llcap-server
-    auto idx = arg_pkt_index_to_fetch();
-
-    if (!request_packet_from_server(idx, &packet_ptr, &packet_size)) {
-      std::cerr << std::format(
-                       "Packet request failed with idx {0}, received size {1}",
-                       idx, packet_size)
-                << std::endl;
-      std::exit(HOOKLIB_EC_RECV_PKT);
-    }
-
-    if (packet_ptr == nullptr ||
-        !locally_initialize_arg_packet(packet_ptr,
-                                       static_cast<int>(packet_size))) {
-      std::cerr << std::format("Packet init failed with idx {0}, received size "
-                               "{1}, packet ptr {2}",
-                               idx, packet_size, packet_ptr)
-                << std::endl;
-      std::exit(HOOKLIB_EC_PAIR);
-    }
+    multithread_test_setup();
     // go back and hijack arguments
     return;
   }

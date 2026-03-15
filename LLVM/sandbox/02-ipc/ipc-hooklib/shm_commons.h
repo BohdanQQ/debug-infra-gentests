@@ -38,6 +38,8 @@ typedef struct {
   unsigned int thread_count;
   // logical ID of the thread to be tested
   unsigned int target_thread_lid;
+  const char* checkpoint_dump_dir;
+  const char* checkpoint_id;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 
@@ -66,5 +68,6 @@ static const char *const META_SEM_ACK = "/llcap-meta-sem-ack";
 static const char *const META_MEM_NAME = "/llcap-meta-shmem";
 static const char *const META_MEM_SIZE_NAME = "/llcap-meta-shmem-size";
 static const char *const TEST_SERVER_SOCKET_NAME = "/tmp/llcap-test-server";
+static const char* const CRIU_SOCKET_PATH = "/tmp/llcap-criu-socket.service";
 
 #endif // LLCAP_SHM_COMMONS

@@ -96,6 +96,13 @@ void init_packet_socket(int fd, uint64_t request_idx);
 // (and thus not performing a fork)
 bool mt_compat_testing(void);
 
+// whether a CRIU checkpoint will be performed
+bool shall_perform_checkpoint(void);
+
+// performs a transparent CRIU checkpoint and restore
+// if not successful, program terminates
+bool perform_checkpoint(void);
+
 // initializes argument packet
 bool locally_initialize_arg_packet(void* owning_packet, int packet_size);
 

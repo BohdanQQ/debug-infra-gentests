@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
           ))?;
 
           if test_count == 0 {
-            Log::get("send_test_metadata").warn(format!(
+            Log::get("main").warn(format!(
               "Skipping M: {} F: {} due to zero test count t:{}",
               module.hex_string(),
               function.hex_string(),

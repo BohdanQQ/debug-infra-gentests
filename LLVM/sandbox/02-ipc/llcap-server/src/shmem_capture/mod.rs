@@ -5,6 +5,7 @@ pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use std::ffi::CStr;
+use std::ptr::null;
 use std::slice;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -486,6 +487,8 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       test_timeout_seconds: 0,
       thread_count: 0,
       target_thread_lid: 0,
+      checkpoint_dump_dir: null(),
+      checkpoint_id: null()
     },
   )
 }
@@ -506,6 +509,8 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       test_timeout_seconds: 0,
       thread_count: 0,
       target_thread_lid: 0,
+      checkpoint_dump_dir: null(),
+      checkpoint_id: null()
     },
   )
 }
@@ -515,6 +520,7 @@ pub fn send_test_metadata(
   infra: InfraParams,
   test: &TestRegisryItem,
 ) -> Result<()> {
+
   send_metadata(
     chnl,
     ShmMeta {
@@ -538,6 +544,8 @@ pub fn send_test_metadata(
       test_timeout_seconds: test.test_timeout_s(),
       thread_count: test.thread_count,
       target_thread_lid: test.thread_lid.0 as u32,
+      checkpoint_dump_dir: null(),
+      checkpoint_id: null()
     },
   )
 }
