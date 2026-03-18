@@ -1,9 +1,11 @@
 #include "checkpoint.hpp"
 #include "shm_commons.h"
 #include <criu/criu.h>
+#include <cstdint>
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <sys/types.h>
 #include <unistd.h>
@@ -73,9 +75,9 @@ static std::string criu_err_msg(int ret) {
  *
  * Returns a pointer to the CRIU config
  */
-static SResult<criu_opts *>
-configureCheckpoint(const std::string &dumpDir, const std::string &criuSockPath,
-                    const std::string &logId) {
+static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
+                                                const std::string &criuSockPath,
+                                                const std::string &logId) {
   using err = std::unexpected<std::string>;
   std::filesystem::path logPath;
   try {
@@ -121,10 +123,12 @@ configureCheckpoint(const std::string &dumpDir, const std::string &criuSockPath,
  *
  * Expected value is a result indicating whether restore took place
  */
-SResult<bool>
-performCheckpoint(const std::string &criuDumpDir,
-                  const std::string &criuLogId) {
-  auto cfgRes = configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH, criuLogId);
+SResult<bool> performCheckpoint(const std::string &criuDumpDir,
+                                uint64_t criuLogId) {
+  std::stringstream idStrStream;
+  idStrStream << std::hex << criuLogId;
+  auto cfgRes =
+      configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH, idStrStream.str());
   if (!cfgRes) {
     return std::unexpected(cfgRes.error());
   }

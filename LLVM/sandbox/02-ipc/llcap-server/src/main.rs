@@ -37,10 +37,10 @@ use crate::{
     common::{
       CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
     },
-    test_registry::{TestRegisryItem, TestRegistry, TestingMode},
+    test_registry::TestingMode,
     testing::{
-      CallIndexT, LogResult, PacketIndexT, TestJobFailure, TestOutputPathGen, TestStatus,
-      ThreadLidT, singular_test_job,
+      BasicTesting, LogResult, MTSupportTesting, PartialRegistryItem, TestJobFailure,
+      TestOutputPathGen, TestStatus, TestingPhase,
     },
   },
 };
@@ -86,6 +86,7 @@ async fn main() -> Result<()> {
   let mut common_params =
     CommonStageParams::try_initialize(cli.buff_count, cli.buff_size, &cli.modmap)?;
   let mut modules = common_params.extract_module_maps()?;
+  let common_params = Arc::new(common_params);
   match cli.stage {
     args::Stage::TraceCalls {
       mut out_file,
@@ -225,8 +226,10 @@ async fn main() -> Result<()> {
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
-      let thread_counts = read_thread_counts(&capture_dir)
-        .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?;
+      let thread_counts = Box::new(
+        read_thread_counts(&capture_dir)
+          .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?,
+      );
       if let Some(inspection_spec) = inspect_packet {
         return crate::stages::testing::inspect_packet(
           &inspection_spec,
@@ -256,7 +259,7 @@ async fn main() -> Result<()> {
         Ok(Err(e)) => bail!("server ready error: {}", e),
       }
 
-      let metadata_svr = create_meta_svr(&common_params, Some(thread_counts.clone()))?;
+      let metadata_svr = create_meta_svr(&common_params, Some(*thread_counts.clone()))?;
       let mut errors = vec![];
       let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
       let test_case_timeout = Duration::from_secs(timeout as u64);
@@ -280,112 +283,41 @@ async fn main() -> Result<()> {
             continue;
           }
 
-          let mut test_reg = TestRegistry::new();
-          let mut tests = vec![];
-          let _test_reg = if mt_support {
-            for (thread_idx, call_count) in thread_counts.iter().enumerate() {
-              for call_index in 0..*call_count {
-                for packet_index in 0..test_count {
-                  let thread_idx = thread_idx as u32;
-                  tests.push(test_reg.add_new_test(
-                    TestRegisryItem {
-                      uid,
-                      call_index: CallIndexT(call_index as u32),
-                      packet_index: PacketIndexT(packet_index as u64),
-                      thread_lid: ThreadLidT(thread_idx as u64),
-                      thread_count: thread_counts.len() as u32,
-                      test_count,
-                      timeout_test: test_case_timeout,
-                      timeout_process: Some(test_case_timeout),
-                      mode: stages::test_registry::TestingMode::MTCompatTesting,
-                    },
-                    &command,
-                  ));
-                }
-              }
-            }
-
-            let test_reg = Arc::new(test_reg);
-            for test in tests {
-              let (tst, cmd) = test_reg
-                .get_test_params(test)
-                .ok_or(anyhow!("Inconsistent test registry"))?;
-              let test_job = singular_test_job(
-                metadata_svr.clone(),
-                common_params.infra,
-                tst,
-                cmd,
-                output_gen.clone(),
-              );
-
-              match test_job.await {
-                Err(e) => errors.push(e),
-                Ok(status) => results.lock().unwrap().push(LogResult::from_test(
-                  test_reg.get_test_params(test).unwrap().0,
-                  // maps GlobalTimeout to just Timeout - in the MT compat testing, we don't distinguish those
-                  if matches!(status, stages::testing::TestStatus::GlobalTimeout) {
-                    stages::testing::TestStatus::Timeout
-                  } else {
-                    status
-                  },
-                )),
-              }
-            }
-            test_reg.clone()
+          if mt_support {
+            let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
+            run_test_case(
+              p,
+              command.clone(),
+              PartialRegistryItem {
+                uid,
+                test_count,
+                test_case_timeout,
+                global_timeout,
+                thread_counts: thread_counts.clone(),
+              },
+              metadata_svr.clone(),
+              results.clone(),
+              &mut errors,
+            )
+            .await
           } else {
-            let mut tests = vec![];
-            for call_idx in 0..test_count {
-              tests.push(test_reg.add_new_test(
-                TestRegisryItem {
-                  uid,
-                  call_index: CallIndexT(call_idx),
-                  packet_index: PacketIndexT(0_u64),
-                  thread_lid: ThreadLidT(0_u64),
-                  thread_count: thread_counts.len() as u32,
-                  test_count,
-                  timeout_test: test_case_timeout,
-                  timeout_process: global_timeout,
-                  mode: stages::test_registry::TestingMode::Testing,
-                },
-                &command,
-              ));
-            }
-
-            let test_reg = Arc::new(test_reg);
-            for test in tests {
-              let (tst, cmd) = test_reg
-                .get_test_params(test)
-                .ok_or(anyhow!("Inconsistent test registry"))?;
-              lg.trace(format!("Start test {tst:?}"));
-
-              let test_job = singular_test_job(
-                metadata_svr.clone(),
-                common_params.infra,
-                tst,
-                cmd,
-                output_gen.clone(),
-              );
-
-              match test_job.await {
-                Err(e) => errors.push(e),
-                Ok(status)
-                  if matches!(
-                    status,
-                    stages::testing::TestStatus::GlobalTimeout
-                      | stages::testing::TestStatus::Spurious(_)
-                      | stages::testing::TestStatus::Fatal(_)
-                  ) =>
-                {
-                  results.lock().unwrap().push(LogResult::from_test(
-                    test_reg.get_test_params(test).unwrap().0,
-                    status,
-                  ))
-                }
-                _ => {}
-              }
-            }
-            test_reg.clone()
-          };
+            let p = BasicTesting::new(common_params.clone(), output_gen.clone());
+            run_test_case(
+              p,
+              command.clone(),
+              PartialRegistryItem {
+                uid,
+                test_count,
+                test_case_timeout,
+                global_timeout,
+                thread_counts: thread_counts.clone(),
+              },
+              metadata_svr.clone(),
+              results.clone(),
+              &mut errors,
+            )
+            .await
+          }?;
         }
       }
       lg.progress("Waiting for server to exit...");
@@ -502,5 +434,29 @@ async fn report_results(
     let _ = lg.result(&error.log_res).await;
   }
   lg.finish().await?;
+  Ok(())
+}
+
+async fn run_test_case(
+  mut test_phase: impl TestingPhase,
+  cmd: Arc<Vec<String>>,
+  template: PartialRegistryItem,
+  metadata_svr: Arc<Mutex<MetadataPublisher>>,
+  results: Arc<Mutex<Vec<LogResult>>>,
+  errors: &mut Vec<TestJobFailure>,
+) -> Result<()> {
+  while let Ok(v) = test_phase.prepare_cases(&cmd, &template) {
+    if !v {
+      break;
+    }
+    let (mut res, mut err) = test_phase.run_tests(metadata_svr.clone()).await?;
+
+    results.lock().unwrap().append(&mut res);
+    errors.append(&mut err);
+
+    if test_phase.next_batch().is_none() {
+      break;
+    }
+  }
   Ok(())
 }

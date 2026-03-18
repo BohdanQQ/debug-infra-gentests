@@ -275,13 +275,15 @@ bool in_testing_mode(void) {
 }
 
 // TODO
-bool shall_perform_checkpoint() { return false; }
+bool shall_perform_checkpoint() {
+  return false && mt_compat_testing() && s_buff_info.checkpoint_dump_dir != nullptr &&
+         s_buff_info.checkpoint_id != 0ULL;
+}
 
 bool perform_checkpoint() {
-  // TODO - test
   // normally, we would like to "deinitialize" every single shared resource
   // (e.g. the shared memory mapping)
-  // but since checkpointing is a testing-only feature and we don't use 
+  // but since checkpointing is a testing-only feature and we don't use
   // shared memory (after initialization) in the testing phase, we don't need to
   // do anything here
   auto rv = performCheckpoint(s_buff_info.checkpoint_dump_dir,

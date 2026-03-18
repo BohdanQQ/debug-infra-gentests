@@ -3,6 +3,7 @@
 #define LLCAP_SHM_COMMONS
 
 #ifdef __cplusplus
+static_assert(sizeof(unsigned long long) == 8, "expected size of u64");
 static_assert(sizeof(unsigned int) == 4, "expected size of u32");
 static_assert(sizeof(unsigned short) == 2, "expected size of u16");
 #endif
@@ -39,7 +40,7 @@ typedef struct {
   // logical ID of the thread to be tested
   unsigned int target_thread_lid;
   const char* checkpoint_dump_dir;
-  const char* checkpoint_id;
+  unsigned long long checkpoint_id;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 

@@ -100,7 +100,7 @@ bool mt_compat_testing(void);
 bool shall_perform_checkpoint(void);
 
 // performs a transparent CRIU checkpoint and restore
-// if not successful, program terminates
+// if not successful
 bool perform_checkpoint(void);
 
 // initializes argument packet

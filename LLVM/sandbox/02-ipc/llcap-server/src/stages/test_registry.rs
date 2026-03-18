@@ -85,4 +85,8 @@ impl TestRegistry {
   pub fn get_test_commandline(&self, id: TestID) -> Option<&[String]> {
     self.cmd_map.get(&id).map(|v| &self.cmds[*v]).map(|v| &**v)
   }
+
+  pub fn clear(&mut self) {
+    *self = Self::new();
+  }
 }

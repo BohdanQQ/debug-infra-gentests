@@ -488,7 +488,7 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       thread_count: 0,
       target_thread_lid: 0,
       checkpoint_dump_dir: null(),
-      checkpoint_id: null()
+      checkpoint_id: 0,
     },
   )
 }
@@ -510,7 +510,7 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       thread_count: 0,
       target_thread_lid: 0,
       checkpoint_dump_dir: null(),
-      checkpoint_id: null()
+      checkpoint_id: 0,
     },
   )
 }
@@ -520,7 +520,10 @@ pub fn send_test_metadata(
   infra: InfraParams,
   test: &TestRegisryItem,
 ) -> Result<()> {
-
+  const CHECKPOINT_PATH: &str = "/tmp/llcap-criu-checkpoints\0";
+  let checkpoint_id = test.call_index.0 as u64 * 1000 * 1000 * 1000
+    + test.packet_index.0 * 1000 * 1000
+    + test.target_call_number() as u64;
   send_metadata(
     chnl,
     ShmMeta {
@@ -544,8 +547,8 @@ pub fn send_test_metadata(
       test_timeout_seconds: test.test_timeout_s(),
       thread_count: test.thread_count,
       target_thread_lid: test.thread_lid.0 as u32,
-      checkpoint_dump_dir: null(),
-      checkpoint_id: null()
+      checkpoint_dump_dir: CHECKPOINT_PATH.as_ptr() as *const i8,
+      checkpoint_id,
     },
   )
 }

@@ -24,7 +24,12 @@ use crate::{
   log::{IntoLogString, Log, LogStrategy},
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   shmem_capture::{MetadataPublisher, hooklib_commons::*, send_test_metadata},
-  stages::{arg_capture::PacketReader, common::*, test_registry::TestRegisryItem},
+  stages::{
+    self,
+    arg_capture::PacketReader,
+    common::*,
+    test_registry::{TestID, TestRegisryItem, TestRegistry},
+  },
 };
 
 use super::arg_capture::PacketProvider;
@@ -527,6 +532,7 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
   raw_send_to_client(write_stream, response).await
 }
 
+#[derive(Clone)]
 pub struct TestJobFailure {
   pub log_res: LogResult,
 }
@@ -773,5 +779,241 @@ pub fn inspect_packet(
       }
       Ok(())
     }
+  }
+}
+
+#[derive(Clone)]
+pub struct PartialRegistryItem {
+  pub uid: NumFunUid,
+  pub test_count: u32,
+  pub test_case_timeout: Duration,
+  pub global_timeout: Option<Duration>,
+  pub thread_counts: Box<Vec<u64>>,
+}
+struct CommonTestingPhaseStore {
+  pub test_registry: TestRegistry,
+  pub tests: Vec<TestID>,
+  pub params: Arc<CommonStageParams>,
+  pub output_generator: Arc<Option<TestOutputPathGen>>,
+}
+
+pub trait TestingPhase {
+  // prepares test cases (allows post-processing)
+  fn prepare_cases(&mut self, command: &[String], partial: &PartialRegistryItem) -> Result<bool>;
+  // runs test cases and provides their results
+  async fn run_tests(
+    &mut self,
+    meta: Arc<Mutex<MetadataPublisher>>,
+  ) -> Result<(Vec<LogResult>, Vec<TestJobFailure>)>;
+  // indicates whether a next batch of prepare-run is needed
+  fn next_batch(&self) -> Option<()>;
+}
+
+impl CommonTestingPhaseStore {
+  pub fn new(
+    common_params: Arc<CommonStageParams>,
+    out_gen: Arc<Option<TestOutputPathGen>>,
+  ) -> Self {
+    Self {
+      test_registry: TestRegistry::new(),
+      tests: vec![],
+      params: common_params,
+      output_generator: out_gen,
+    }
+  }
+}
+
+pub struct MTSupportTesting {
+  common: CommonTestingPhaseStore,
+}
+
+impl MTSupportTesting {
+  pub fn new(
+    common_params: Arc<CommonStageParams>,
+    out_gen: Arc<Option<TestOutputPathGen>>,
+  ) -> Self {
+    Self {
+      common: CommonTestingPhaseStore::new(common_params, out_gen),
+    }
+  }
+}
+
+impl TestingPhase for MTSupportTesting {
+  fn prepare_cases(&mut self, command: &[String], partial: &PartialRegistryItem) -> Result<bool> {
+    self.common.test_registry.clear();
+    self.common.tests.clear();
+
+    let tests = &mut self.common.tests;
+    let test_count = partial.test_count;
+    let timeout_test = partial.test_case_timeout;
+    let uid: NumFunUid = partial.uid;
+    let thread_counts = &partial.thread_counts;
+    for (thread_idx, call_count) in thread_counts.iter().enumerate() {
+      for call_index in 0..*call_count {
+        for packet_index in 0..test_count {
+          let thread_idx = thread_idx as u32;
+          tests.push(self.common.test_registry.add_new_test(
+            TestRegisryItem {
+              uid,
+              call_index: CallIndexT(call_index as u32),
+              packet_index: PacketIndexT(packet_index as u64),
+              thread_lid: ThreadLidT(thread_idx as u64),
+              thread_count: thread_counts.len() as u32,
+              test_count,
+              timeout_test,
+              timeout_process: Some(timeout_test),
+              mode: stages::test_registry::TestingMode::MTCompatTesting,
+            },
+            command,
+          ));
+        }
+      }
+    }
+    Ok(!self.common.tests.is_empty())
+  }
+
+  async fn run_tests(
+    &mut self,
+    meta: Arc<Mutex<MetadataPublisher>>,
+  ) -> Result<(Vec<LogResult>, Vec<TestJobFailure>)> {
+    let test_reg = &self.common.test_registry;
+    let mut errors: Vec<TestJobFailure> = vec![];
+    let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
+    for test in &self.common.tests {
+      let (tst, cmd) = test_reg
+        .get_test_params(*test)
+        .ok_or(anyhow!("Inconsistent test registry"))?;
+      let test_job = singular_test_job(
+        meta.clone(),
+        self.common.params.infra,
+        tst,
+        cmd,
+        self.common.output_generator.clone(),
+      );
+
+      match test_job.await {
+        Err(e) => errors.push(e),
+        Ok(status) => results.lock().unwrap().push(LogResult::from_test(
+          test_reg.get_test_params(*test).unwrap().0,
+          // maps GlobalTimeout to just Timeout - in the MT compat testing, we don't distinguish those
+          if matches!(status, stages::testing::TestStatus::GlobalTimeout) {
+            stages::testing::TestStatus::Timeout
+          } else {
+            status
+          },
+        )),
+      }
+    }
+    Ok((
+      Arc::try_unwrap(results)
+        .map_err(|_| anyhow!("Failed to free results out of Arc"))?
+        .lock()
+        .unwrap()
+        .clone(),
+      errors,
+    ))
+  }
+
+  fn next_batch(&self) -> Option<()> {
+    None
+  }
+}
+
+pub struct BasicTesting {
+  common: CommonTestingPhaseStore,
+}
+
+impl BasicTesting {
+  pub fn new(
+    common_params: Arc<CommonStageParams>,
+    out_gen: Arc<Option<TestOutputPathGen>>,
+  ) -> Self {
+    Self {
+      common: CommonTestingPhaseStore::new(common_params, out_gen),
+    }
+  }
+}
+
+impl TestingPhase for BasicTesting {
+  fn prepare_cases(&mut self, command: &[String], partial: &PartialRegistryItem) -> Result<bool> {
+    self.common.test_registry.clear();
+    self.common.tests.clear();
+
+    let tests = &mut self.common.tests;
+    let test_count = partial.test_count;
+    let timeout_test = partial.test_case_timeout;
+    let uid: NumFunUid = partial.uid;
+    let thread_counts = &partial.thread_counts;
+    for call_idx in 0..test_count {
+      tests.push(self.common.test_registry.add_new_test(
+        TestRegisryItem {
+          uid,
+          call_index: CallIndexT(call_idx),
+          packet_index: PacketIndexT(0_u64),
+          thread_lid: ThreadLidT(0_u64),
+          thread_count: thread_counts.len() as u32,
+          test_count,
+          timeout_test,
+          timeout_process: partial.global_timeout,
+          mode: stages::test_registry::TestingMode::Testing,
+        },
+        command,
+      ));
+    }
+    Ok(!self.common.tests.is_empty())
+  }
+
+  async fn run_tests(
+    &mut self,
+    meta: Arc<Mutex<MetadataPublisher>>,
+  ) -> Result<(Vec<LogResult>, Vec<TestJobFailure>)> {
+    let test_reg = &self.common.test_registry;
+    let mut errors: Vec<TestJobFailure> = vec![];
+    let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
+    let lg = Log::get("run_tests");
+    for test in &self.common.tests {
+      let (tst, cmd) = test_reg
+        .get_test_params(*test)
+        .ok_or(anyhow!("Inconsistent test registry"))?;
+      lg.trace(format!("Start test {tst:?}"));
+
+      let test_job = singular_test_job(
+        meta.clone(),
+        self.common.params.infra,
+        tst,
+        cmd,
+        self.common.output_generator.clone(),
+      );
+
+      match test_job.await {
+        Err(e) => errors.push(e),
+        Ok(status)
+          if matches!(
+            status,
+            stages::testing::TestStatus::GlobalTimeout
+              | stages::testing::TestStatus::Spurious(_)
+              | stages::testing::TestStatus::Fatal(_)
+          ) =>
+        {
+          results.lock().unwrap().push(LogResult::from_test(
+            test_reg.get_test_params(*test).unwrap().0,
+            status,
+          ))
+        }
+        _ => {}
+      }
+    }
+    Ok((
+      Arc::try_unwrap(results)
+        .map_err(|_| anyhow!("Failed to free results out of Arc"))?
+        .lock()
+        .unwrap()
+        .clone(),
+      errors,
+    ))
+  }
+
+  fn next_batch(&self) -> Option<()> {
+    None
   }
 }
