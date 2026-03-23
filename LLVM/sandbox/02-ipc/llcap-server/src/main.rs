@@ -49,7 +49,7 @@ use crate::{
 
 fn create_meta_svr(
   params: &CommonStageParams,
-  thread_counters: Option<Vec<u64>>,
+  thread_counters: Option<Vec<u64>>, // TODO: remove (the vec is not read anyway)
 ) -> Result<Arc<Mutex<MetadataPublisher>>> {
   let (data_name, size_name) = params.shmem_path_cstr()?;
   Ok(Arc::new(Mutex::new(

@@ -10,6 +10,8 @@ pub enum TestingMode {
   #[allow(dead_code)]
   Testing,
   MTCompatTesting,
+  // indicates whether to perform a checkpoint
+  CheckpointedTesting(bool),
 }
 
 #[derive(Debug, Clone)]

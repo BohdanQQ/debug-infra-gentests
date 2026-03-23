@@ -34,7 +34,7 @@ use crate::{
 
 use super::arg_capture::PacketProvider;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LogResult {
   pub call: CallIndexT,
   pub uid: NumFunUid,
@@ -532,7 +532,7 @@ async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u
   raw_send_to_client(write_stream, response).await
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TestJobFailure {
   pub log_res: LogResult,
 }
@@ -626,6 +626,17 @@ pub async fn singular_test_job(
     }
     _ => Ok(result),
   }
+}
+
+pub async fn singular_restore_job(
+  metadata_svr: Arc<Mutex<MetadataPublisher>>,
+  infra_params: InfraParams,
+  test: &TestRegisryItem,
+  cmdline: Option<&[String]>,
+  output_gen: Arc<Option<TestOutputPathGen>>,
+) -> Result<TestStatus, TestJobFailure> {
+  // TODO: implement the restoration-enabled test job
+  todo!()
 }
 
 /// waits for or terminates the test instance (child process representing the entire test process) based on a timeout
@@ -879,10 +890,12 @@ impl TestingPhase for MTSupportTesting {
     let test_reg = &self.common.test_registry;
     let mut errors: Vec<TestJobFailure> = vec![];
     let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
+    let lg = Log::get("run_tests<MTSupp>");
     for test in &self.common.tests {
       let (tst, cmd) = test_reg
         .get_test_params(*test)
         .ok_or(anyhow!("Inconsistent test registry"))?;
+      lg.trace(format!("Start test {tst:?}"));
       let test_job = singular_test_job(
         meta.clone(),
         self.common.params.infra,
@@ -970,7 +983,234 @@ impl TestingPhase for BasicTesting {
     let test_reg = &self.common.test_registry;
     let mut errors: Vec<TestJobFailure> = vec![];
     let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
-    let lg = Log::get("run_tests");
+    let lg = Log::get("run_tests<BasicTesting>");
+    for test in &self.common.tests {
+      let (tst, cmd) = test_reg
+        .get_test_params(*test)
+        .ok_or(anyhow!("Inconsistent test registry"))?;
+      lg.trace(format!("Start test {tst:?}"));
+
+      let test_job = singular_test_job(
+        meta.clone(),
+        self.common.params.infra,
+        tst,
+        cmd,
+        self.common.output_generator.clone(),
+      );
+
+      match test_job.await {
+        Err(e) => errors.push(e),
+        Ok(status)
+          if matches!(
+            status,
+            stages::testing::TestStatus::GlobalTimeout
+              | stages::testing::TestStatus::Spurious(_)
+              | stages::testing::TestStatus::Fatal(_)
+          ) =>
+        {
+          results.lock().unwrap().push(LogResult::from_test(
+            test_reg.get_test_params(*test).unwrap().0,
+            status,
+          ))
+        }
+        Ok(other) => {
+          lg.info(format!("Skipped test result: {other:?}"));
+        }
+      }
+    }
+    Ok((
+      Arc::try_unwrap(results)
+        .map_err(|_| anyhow!("Failed to free results out of Arc"))?
+        .lock()
+        .unwrap()
+        .clone(),
+      errors,
+    ))
+  }
+
+  fn next_batch(&self) -> Option<()> {
+    None
+  }
+}
+
+#[derive(Copy, Clone)]
+enum CheckpointState {
+  Init,
+  Checkpoint(u64),
+  End,
+}
+
+pub struct CheckpointedTesting {
+  common: CommonTestingPhaseStore,
+  last_checkpoint: CheckpointState,
+  // test item & the command line
+  // presence (as a whole)           => Perform checkpoint
+  // presence of command line vector => Start from scratch, don't checkpoint
+  // (conversly, restore a checkpoint and retarget if not present)
+  checkpointing_testcase: Option<(TestRegisryItem, Option<Vec<String>>)>,
+}
+
+impl CheckpointedTesting {
+  fn make_checkpointing_case(
+    &mut self,
+    command: &[String],
+    partial: &PartialRegistryItem,
+  ) -> Result<bool> {
+    const STOP: Result<bool> = Ok(false);
+    if let CheckpointState::End = self.last_checkpoint {
+      self.checkpointing_testcase = None;
+      return STOP;
+    }
+    let init = self.checkpointing_testcase.is_none();
+    let (n_thread_id, n_call_idx, cmd) = match &self.checkpointing_testcase {
+      None => (0, 0, Some(command.to_vec())),
+      Some((tc, _)) => (tc.thread_lid.0, tc.call_index.0, None),
+    };
+
+    let idx_overflows = partial.thread_counts[n_thread_id as usize] <= n_call_idx as u64;
+    let (n_thread_id, n_call_idx) = if idx_overflows {
+      (n_thread_id + 1, 0)
+    } else {
+      (n_thread_id, n_call_idx + if init { 0 } else { 1 })
+    };
+
+    if n_thread_id >= partial.thread_counts.len() as u64 {
+      return STOP;
+    }
+
+    let mut item = TestRegisryItem {
+      uid: partial.uid,
+      call_index: CallIndexT(match self.last_checkpoint {
+        CheckpointState::Init => {
+          ensure!(
+            0 == n_call_idx,
+            "inconsistent state init, got: {}",
+            n_call_idx
+          );
+          0
+        }
+        CheckpointState::Checkpoint(i) => {
+          ensure!(
+            i == n_call_idx.into(),
+            "inconsistent state next: {}, got: {}",
+            i,
+            n_call_idx
+          );
+          i as u32
+        }
+        CheckpointState::End => bail!("This should not have happened!"),
+      }),
+      // "DC" = disregard / "don't care"
+      packet_index: PacketIndexT(0), // DC
+      thread_lid: ThreadLidT(n_thread_id),
+      thread_count: partial.thread_counts.len() as u32,
+      test_count: 0,                           // DC
+      timeout_test: partial.test_case_timeout, // this should be "DC"
+      timeout_process: partial.global_timeout,
+      mode: stages::test_registry::TestingMode::CheckpointedTesting(true),
+    };
+
+    ensure!(
+      cmd.is_some() || self.checkpointing_testcase.is_some(),
+      "Unwrap guard"
+    );
+    self
+      .checkpointing_testcase
+      .as_mut()
+      .map(|v| {
+        std::mem::swap(&mut v.0, &mut item);
+        v
+      })
+      .get_or_insert(&mut (item, cmd));
+
+    Ok(true)
+  }
+  pub fn run_until_checkpointed() {}
+}
+
+impl TestingPhase for CheckpointedTesting {
+  fn prepare_cases(&mut self, command: &[String], partial: &PartialRegistryItem) -> Result<bool> {
+    const STOP: Result<bool> = Ok(false);
+    // prepare the checkpointing case
+    if let Ok(false) = self.make_checkpointing_case(command, partial) {
+      return STOP;
+    }
+    ensure!(self.checkpointing_testcase.is_some(), "invariant broken");
+    let tc = self.checkpointing_testcase.as_mut().unwrap();
+
+    // then continue with normal testcases for that single call number
+    self.common.test_registry.clear();
+    self.common.tests.clear();
+
+    let tests = &mut self.common.tests;
+    let test_count = partial.test_count;
+    let timeout_test = partial.test_case_timeout;
+    let uid: NumFunUid = partial.uid;
+    let thread_counts = &partial.thread_counts;
+
+    let thread_lid = tc.0.thread_lid;
+    // if checkpoint restore takes place, be sure to skip the right amount of calls
+    let skip = tc.0.call_index.0;
+    let call_count: u64 = thread_counts[thread_lid.0 as usize];
+
+    for call_index in (0..call_count).skip(skip as usize) {
+      for packet_index in 0..test_count {
+        tests.push(self.common.test_registry.add_new_test(
+          TestRegisryItem {
+            uid,
+            call_index: CallIndexT(call_index as u32),
+            packet_index: PacketIndexT(packet_index as u64),
+            thread_lid,
+            thread_count: thread_counts.len() as u32,
+            test_count,
+            timeout_test,
+            timeout_process: Some(timeout_test),
+            mode: stages::test_registry::TestingMode::MTCompatTesting,
+          },
+          command,
+        ));
+      }
+    }
+    Ok(true)
+  }
+
+  async fn run_tests(
+    &mut self,
+    meta: Arc<Mutex<MetadataPublisher>>,
+  ) -> Result<(Vec<LogResult>, Vec<TestJobFailure>)> {
+    // perform the checkpointing case (normal start when init state)
+    // (stored checkpoint case)
+    {
+      ensure!(
+        self.checkpointing_testcase.is_some(),
+        "invalid usage - checkpoint test case is None"
+      );
+
+      let (tst, cmd) = &self.checkpointing_testcase.as_ref().unwrap();
+
+      let test_job = singular_restore_job(
+        meta.clone(),
+        self.common.params.infra,
+        tst,
+        cmd.as_deref(),
+        self.common.output_generator.clone(),
+      );
+
+      match test_job.await {
+        Err(e) => bail!("Failed checkpoint: {e:?}"),
+        Ok(stages::testing::TestStatus::Fatal(e)) => bail!("Failed checkpoint: {e}"),
+        _ => (),
+      };
+    }
+
+    // after checkpoint case is done (checkpoint should exist under the ID)
+    // run all test cases by restoring the checkpoint, retargeting the case
+    // and monitoring it as in the normal MT support case
+
+    let test_reg = &self.common.test_registry;
+    let mut errors: Vec<TestJobFailure> = vec![];
+    let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
+    let lg = Log::get("run_tests<CheckpointedTesting>");
     for test in &self.common.tests {
       let (tst, cmd) = test_reg
         .get_test_params(*test)
@@ -1003,6 +1243,13 @@ impl TestingPhase for BasicTesting {
         _ => {}
       }
     }
+    // increment the current call number
+    // TODO: adapt this for TID + CALL_IDX pair
+    self.last_checkpoint = match self.last_checkpoint {
+      CheckpointState::Init => CheckpointState::Checkpoint(1),
+      CheckpointState::Checkpoint(i) => CheckpointState::Checkpoint(i + 1),
+      CheckpointState::End => self.last_checkpoint,
+    };
     Ok((
       Arc::try_unwrap(results)
         .map_err(|_| anyhow!("Failed to free results out of Arc"))?
@@ -1014,6 +1261,9 @@ impl TestingPhase for BasicTesting {
   }
 
   fn next_batch(&self) -> Option<()> {
-    None
+    match self.last_checkpoint {
+      CheckpointState::Init | CheckpointState::Checkpoint(_) => Some(()),
+      CheckpointState::End => None,
+    }
   }
 }

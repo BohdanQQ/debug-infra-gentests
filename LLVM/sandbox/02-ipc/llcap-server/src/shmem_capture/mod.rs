@@ -4,7 +4,7 @@ pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
-use std::ffi::CStr;
+use std::ffi::{self, CStr, c_void};
 use std::ptr::null;
 use std::slice;
 
@@ -14,11 +14,15 @@ use crate::libc_wrappers::shared_memory::ShmemHandle;
 use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::ExtModuleMap;
+use crate::shmem_capture::hooklib_commons::{
+  MODE_ARG_CAPTURE, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT, MODE_CHECKPOINT_TESTING_NOCHECKPOINT,
+  MODE_MT_TESTING, MODE_TESTING,
+};
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
 use crate::stages::test_registry::{TestRegisryItem, TestingMode};
 use crate::stages::testing::test_server_socket;
-use libc::O_CREAT;
+use libc::{O_CREAT, mempcpy};
 
 /// a handle to all shared memory infrastructure necessary for function tracing (call tracing and argument capture)
 pub struct TracingInfra {
@@ -515,6 +519,26 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
   )
 }
 
+pub trait ToLlcapRaw {
+  fn to_raw(&self) -> ffi::c_uint;
+}
+
+impl ToLlcapRaw for TestingMode {
+  fn to_raw(&self) -> ffi::c_uint {
+    match self {
+      TestingMode::Testing => MODE_TESTING,
+      TestingMode::MTCompatTesting => MODE_MT_TESTING,
+      TestingMode::CheckpointedTesting(on) => {
+        if *on {
+          MODE_CHECKPOINT_TESTING_DO_CHECKPOINT
+        } else {
+          MODE_CHECKPOINT_TESTING_NOCHECKPOINT
+        }
+      }
+    }
+  }
+}
+
 pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   infra: InfraParams,
@@ -530,10 +554,7 @@ pub fn send_test_metadata(
       buff_count: infra.buff_count,
       buff_len: infra.buff_len,
       total_len: infra.buff_count * infra.buff_len,
-      mode: match test.mode {
-        TestingMode::Testing => 2,
-        TestingMode::MTCompatTesting => 3,
-      },
+      mode: test.mode.to_raw(),
       target_fnid: *test.uid.function_id,
       target_modid: *test.uid.module_id,
       forked: 0,
@@ -541,7 +562,9 @@ pub fn send_test_metadata(
         TestingMode::Testing => test.test_count,
         // in compat testing, testcount is always 1 and is re-used
         // for the packet index
-        TestingMode::MTCompatTesting => test.packet_index.0 as u32,
+        TestingMode::MTCompatTesting | TestingMode::CheckpointedTesting(_) => {
+          test.packet_index.0 as u32
+        }
       },
       target_call_number: test.target_call_number(),
       test_timeout_seconds: test.test_timeout_s(),
@@ -590,9 +613,10 @@ impl MetadataPublisher {
   ) -> Result<Self> {
     let (rdy, ack) = Self::mk_sems(rdy_sem_path, ack_sem_path)?;
 
+    // TODO remove
     // allocate sizeof(shmemHandle) + (size of the thread_ids data)
-    let to_alloc = std::mem::size_of::<ShmMeta>() as u32
-      + thread_ids.map(|v| (v.len() * 8) as u32).unwrap_or(0u32);
+    let to_alloc = std::mem::size_of::<ShmMeta>() as u32;
+    // + thread_ids.map(|v| (v.len() * 8) as u32).unwrap_or(0u32);
 
     // share the size-to-be allocated
     let mut size_shm = ShmemHandle::try_mmap(size_mem_path, 4)?;
@@ -660,6 +684,29 @@ impl MetadataPublisher {
     self.data_ack_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     self.data_rdy_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     Ok(())
+  }
+
+  // TODO: use this for retargeting
+  pub fn publish_raw(&mut self, data: &[u8]) -> Result<()> {
+    if !self.data_ack_sem.try_wait(Some(5))? {
+      bail!("Publish timed out");
+    }
+
+    {
+      Log::get("MetadataPublisher::publish_raw").trace(format!("Publishing data: {:?}", data));
+
+      let mem = self.shm.borrow_ptr_mut()?;
+      unsafe {
+        // SAFETY: allocation of self.shm (mainly the size)
+        // unaligned write just to be sure
+        mempcpy(
+          *mem as *mut c_void,
+          data.as_ptr() as *const c_void,
+          data.len(),
+        );
+      }
+    }
+    self.data_rdy_sem.try_post()
   }
 }
 
