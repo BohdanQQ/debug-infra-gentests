@@ -109,6 +109,10 @@ bool locally_initialize_arg_packet(void* owning_packet, int packet_size);
 // obtain the logical ID of this thread
 uint64_t get_thread_lid();
 
+// whether a retarget (change of target thread LID / target call index) may happen (i.e. a checkpoint restore may happen)
+bool performs_retarget();
+
+
 #ifdef __cplusplus
 }
 #endif

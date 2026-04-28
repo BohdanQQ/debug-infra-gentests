@@ -39,6 +39,15 @@ impl TestRegisryItem {
   pub fn terminate_child(&self) -> bool {
     !matches!(self.mode, TestingMode::MTCompatTesting)
   }
+
+  pub fn id(&self) -> String {
+    format!(
+      "t{}-c{}-i{}",
+      self.thread_lid.0,
+      self.target_call_number(),
+      self.packet_index.0
+    )
+  }
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]

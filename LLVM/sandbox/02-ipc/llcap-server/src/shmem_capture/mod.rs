@@ -15,8 +15,7 @@ use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::ExtModuleMap;
 use crate::shmem_capture::hooklib_commons::{
-  MODE_ARG_CAPTURE, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT, MODE_CHECKPOINT_TESTING_NOCHECKPOINT,
-  MODE_MT_TESTING, MODE_TESTING,
+  CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT, MODE_CHECKPOINT_TESTING_NOCHECKPOINT, MODE_MT_TESTING, MODE_TESTING
 };
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
@@ -491,7 +490,7 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       test_timeout_seconds: 0,
       thread_count: 0,
       target_thread_lid: 0,
-      checkpoint_dump_dir: null(),
+      checkpoint_dump_dir: [0; 512],
       checkpoint_id: 0,
     },
   )
@@ -513,7 +512,7 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       test_timeout_seconds: 0,
       thread_count: 0,
       target_thread_lid: 0,
-      checkpoint_dump_dir: null(),
+      checkpoint_dump_dir: [0; 512],
       checkpoint_id: 0,
     },
   )
@@ -543,11 +542,20 @@ pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   infra: InfraParams,
   test: &TestRegisryItem,
+  checkpoint_path: Option<&str>
 ) -> Result<()> {
-  const CHECKPOINT_PATH: &str = "/tmp/llcap-criu-checkpoints\0";
   let checkpoint_id = test.call_index.0 as u64 * 1000 * 1000 * 1000
     + test.packet_index.0 * 1000 * 1000
     + test.target_call_number() as u64;
+    const MAX_CHARS : usize  =( CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO - 1) as usize;
+  
+  let checkpoint_path = checkpoint_path.or(Some("")).unwrap();
+  ensure!(checkpoint_path.bytes().len() <= MAX_CHARS, "Path to CRIU dumps too long!");
+  
+  let v : Vec<i8> = checkpoint_path.as_bytes().iter().take(MAX_CHARS as usize).map(|v| *v as i8).collect::<Vec<i8>>();
+  let mut dump_dir : [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
+  dump_dir.copy_from_slice(v.as_slice());
+
   send_metadata(
     chnl,
     ShmMeta {
@@ -570,7 +578,7 @@ pub fn send_test_metadata(
       test_timeout_seconds: test.test_timeout_s(),
       thread_count: test.thread_count,
       target_thread_lid: test.thread_lid.0 as u32,
-      checkpoint_dump_dir: CHECKPOINT_PATH.as_ptr() as *const i8,
+      checkpoint_dump_dir: dump_dir,
       checkpoint_id,
     },
   )

@@ -9,15 +9,26 @@ static_assert(sizeof(unsigned short) == 2, "expected size of u16");
 #endif
 
 // NOLINTBEGIN(modernize-use-using)
-typedef struct {
+static const unsigned int MODE_CALL_TRACE = 0;
+static const unsigned int MODE_ARG_CAPTURE = 1;
+static const unsigned int MODE_TESTING = 2;
+// test_count is used as the packet index to be requested
+static const unsigned int MODE_MT_TESTING = 3;
+static const unsigned int MODE_CHECKPOINT_TESTING_NOCHECKPOINT = 4;
+// performs checkpoint in the next call of the instrumented function at the target thread LID
+static const unsigned int MODE_CHECKPOINT_TESTING_DO_CHECKPOINT = 5;
+
+// maximum length of the path to the criu dump, with zero byte
+static const unsigned CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO = 512;
+
+typedef struct ShmMeta {
   unsigned int buff_count;
   unsigned int buff_len;
   unsigned int total_len;
   // the above required for call tracing and argument capture
   
   // false if zero, indicates whether we are in capture mode or not
-  unsigned int mode; // required for argument capture and testing, 0 for call
-                     // tracing, 1 for capture, 2 for testing, 3 for nofork testing (multithreading support) and test_count is used as the packet index to be requested
+  unsigned int mode; // see MODE_* constants
   // the below is required for only the testing phase
   // identifier of function under test
   unsigned int target_fnid;
@@ -39,7 +50,7 @@ typedef struct {
   unsigned int thread_count;
   // logical ID of the thread to be tested
   unsigned int target_thread_lid;
-  const char* checkpoint_dump_dir;
+  const char checkpoint_dump_dir[CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO];
   unsigned long long checkpoint_id;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)

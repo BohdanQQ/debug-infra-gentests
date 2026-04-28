@@ -4,7 +4,7 @@ use std::{
   mem,
   ops::DerefMut,
   os::unix::process::ExitStatusExt,
-  path::PathBuf,
+  path::{Path, PathBuf},
   process::{ExitStatus, Stdio},
   sync::{Arc, Mutex, atomic::AtomicBool},
   time::Duration,
@@ -572,21 +572,16 @@ pub async fn singular_test_job(
       )
     })?;
 
-    send_test_metadata(guard.deref_mut(), infra_params, test)
+    send_test_metadata(guard.deref_mut(), infra_params, test, None)
       .map_err(|e| mk_error(e, TestStatus::Timeout))?;
   }
   // prepare the "command", mainly the std out/err
   let mut cmd = cmd_from_args(cmdline)
     .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
   if let Some(output_gen) = output_gen.as_ref() {
-    let id = format!(
-      "t{}-c{}-i{}",
-      test.thread_lid.0,
-      test.target_call_number(),
-      packet_idx.0
-    );
-    let out_path = output_gen.get_out_path(m, f, &id);
-    let err_path = output_gen.get_err_path(m, f, &id);
+    let id = test.id();
+    let out_path = output_gen.get_out_path(test);
+    let err_path = output_gen.get_err_path(test);
     cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
       |e| {
         mk_error(
@@ -628,15 +623,96 @@ pub async fn singular_test_job(
   }
 }
 
+enum DescriptorMode {
+  Append,
+  New,
+}
+
+pub fn create_descriptors(
+  cmd: &mut Command,
+  test: &TestRegisryItem,
+  output_gen: &&TestOutputPathGen,
+  mode: DescriptorMode,
+) -> Result<()> {
+  let mut fopt = File::options();
+  let options = fopt
+    .append(matches!(mode, DescriptorMode::Append))
+    .create(true);
+  let out_path = output_gen.get_out_path(test);
+  let err_path = output_gen.get_err_path(test);
+  cmd.stdout(Stdio::from(options.open(out_path.clone()).map_err(
+    |e| anyhow!("Stdout file creation failed: {e} {out_path:?}"),
+  )?));
+  cmd.stderr(Stdio::from(options.open(err_path).map_err(|e| {
+    anyhow!("Stderr file creation failed {e} {out_path:?}")
+  })?));
+  Ok(())
+}
+
 pub async fn singular_restore_job(
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
   infra_params: InfraParams,
   test: &TestRegisryItem,
-  cmdline: Option<&[String]>,
-  output_gen: Arc<Option<TestOutputPathGen>>,
+  output_gen: Arc<TestOutputPathGen>,
 ) -> Result<TestStatus, TestJobFailure> {
-  // TODO: implement the restoration-enabled test job
-  todo!()
+  let (m, f) = (test.uid.module_id, test.uid.function_id);
+  let outgen = output_gen.as_ref();
+  output_gen
+      .reload_before_restore(m, f, test)
+      .map_err(|e| TestJobFailure::from_test(test, format!("Failed to restore {e}"), None))?;
+
+  // lambda transforming the test errors to proper return values
+  let mk_error = |error: anyhow::Error, status: TestStatus| {
+    TestJobFailure::from_test(test, error.to_string(), Some(status))
+  };
+  let lg = Log::get("singular_restore_job");
+  // prepare job parameters
+  let restore_path = {
+    lg.trace(format!("Test: {test:?}"));
+
+    let mut guard = metadata_svr.lock().unwrap();
+    guard.re_new().map_err(|v| {
+      TestJobFailure::from_test(
+        test,
+        v.to_string(),
+        TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
+      )
+    })?;
+    let path = output_gen.get_criu_dump(todo!()).map_err(|e| TestJobFailure::from_test(test, format!("{e}"), TestStatus::Fatal("Invalid checkpoint dir path".to_owned()).into()))?.to_string_lossy();
+    send_test_metadata(guard.deref_mut(), infra_params, test, Some(&path))
+      .map_err(|e| mk_error(e, TestStatus::Timeout))?;
+    path.to_string()
+  };
+
+  // prepare the "command", mainly the std out/err
+  let mut cmd = cmd_from_args(&["criu".to_owned(), "restore".to_owned(), "-D".to_owned(), restore_path])
+    .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
+  // descriptors are not created - they are created by CRIU
+
+  // launch the restore
+  let test_process = cmd.spawn().map_err(|e| {
+    mk_error(
+      anyhow!("spawn restore from command: {e}"),
+      TestStatus::Fatal("Spawn".to_owned()),
+    )
+  })?;
+
+  lg.progress(format!(
+    "PID of the restored program: {:?}",
+    test_process.id()
+  ));
+
+  let result = wait_or_terminate(test_process, test).await;
+
+  sleep(Duration::from_millis(300)).await;
+  lg.trace(format!("final status: {result:?}"));
+
+  match &result {
+    TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
+      Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
+    }
+    _ => Ok(result),
+  }
 }
 
 /// waits for or terminates the test instance (child process representing the entire test process) based on a timeout
@@ -690,36 +766,71 @@ async fn wait_or_terminate(mut process: Child, test: &TestRegisryItem) -> TestSt
 pub struct TestOutputPathGen {
   dir: bool,
   base: PathBuf,
+  tmp_dir: PathBuf,
+  criu_dumps_dir: PathBuf
 }
 
 impl TestOutputPathGen {
-  pub fn new(base: Option<PathBuf>) -> Option<Self> {
-    if let Some(base) = base {
-      Self {
-        dir: base.clone().is_dir(),
-        base,
-      }
-      .into()
-    } else {
-      None
+  fn ensure_dir(path: &PathBuf) -> Result<()> {
+    ensure!(
+      !path.exists() || path.is_dir(),
+      format!("Path {path:?} is not a directory!")
+    );
+    if !path.exists() {
+      std::fs::create_dir(path).map_err(|e| anyhow!(e))?
     }
+    Ok(())
   }
 
-  pub fn get_out_path(&self, m: IntegralModId, f: IntegralFnId, id: &str) -> PathBuf {
+  pub fn make(base: Option<PathBuf>) -> Result<Option<Self>> {
+    if base.is_none() {
+      return Ok(None);
+    }
+    let base = base.unwrap().to_owned();
+    let tmp_parent = if base.is_dir() {
+      base.clone()
+    } else {
+      ensure!(base.parent().is_some());
+      base.parent().unwrap().to_path_buf()
+    };
+
+    let folder = Path::new("temp");
+    let tmp_path = tmp_parent.join(folder);
+    Self::ensure_dir(&tmp_path)?;
+    let folder = Path::new("criu-dumps");
+    let criu_dumps_dir = tmp_parent.join(folder);
+    Self::ensure_dir(&criu_dumps_dir)?;
+    Ok(
+      Self {
+        dir: base.is_dir(),
+        tmp_dir: tmp_path,
+        base,
+        criu_dumps_dir
+      }
+      .into(),
+    )
+  }
+
+  pub fn get_criu_dump(&self, index: usize) -> Result<PathBuf> {
+    let path = self.criu_dumps_dir.join(format!("{index}"));
+    Self::ensure_dir(&path).map_err(|e| anyhow!(e)).map(|_| path)
+  }
+
+  pub fn get_out_path(&self, tst: &TestRegisryItem) -> PathBuf {
     self.get_path(format!(
       "M{}-F{}-{}.out",
-      m.hex_string(),
-      f.hex_string(),
-      id
+      tst.uid.module_id.hex_string(),
+      tst.uid.function_id.hex_string(),
+      tst.id()
     ))
   }
 
-  pub fn get_err_path(&self, m: IntegralModId, f: IntegralFnId, id: &str) -> PathBuf {
+  pub fn get_err_path(&self, tst: &TestRegisryItem) -> PathBuf {
     self.get_path(format!(
       "M{}-F{}-{}.err",
-      m.hex_string(),
-      f.hex_string(),
-      id
+      tst.uid.module_id.hex_string(),
+      tst.uid.function_id.hex_string(),
+      tst.id()
     ))
   }
 
@@ -729,6 +840,43 @@ impl TestOutputPathGen {
     } else {
       self.base.clone()
     }
+  }
+
+  /// Stores stdout/err to temporary locations after a checkpoint.
+  /// The temporary copy is needed for the restoration done later
+  pub fn store_after_checkpoint(
+    &self,
+    m: IntegralModId,
+    f: IntegralFnId,
+    tst: &TestRegisryItem,
+  ) -> Result<()> {
+    let from_out = self.get_out_path(tst);
+    let from_err = self.get_err_path(tst);
+    ensure!(from_out.file_name().is_some() && from_err.file_name().is_some());
+    let temp_out = self.tmp_dir.join(from_out.file_name().unwrap());
+    let temp_err = self.tmp_dir.join(from_err.file_name().unwrap());
+
+    std::fs::copy(from_out, temp_out).or(Err(anyhow!("Checkpoint copy, out")))?;
+    std::fs::copy(from_err, temp_err).or(Err(anyhow!("Checkpoint copy, err")))?;
+    Ok(())
+  }
+
+  /// Reloads temporarily stored stdout/err of a test job to allow the checkpoint to go through.
+  pub fn reload_before_restore(
+    &self,
+    m: IntegralModId,
+    f: IntegralFnId,
+    tst: &TestRegisryItem,
+  ) -> Result<()> {
+    let renew_out = self.get_out_path(tst);
+    let renew_err = self.get_err_path(tst);
+    ensure!(renew_out.file_name().is_some() && renew_err.file_name().is_some());
+    let temp_out = self.tmp_dir.join(renew_out.file_name().unwrap());
+    let temp_err = self.tmp_dir.join(renew_err.file_name().unwrap());
+
+    std::fs::copy(temp_out, renew_out).or(Err(anyhow!("Checkpoint restore, out")))?;
+    std::fs::copy(temp_err, renew_err).or(Err(anyhow!("Checkpoint restore, err")))?;
+    Ok(())
   }
 }
 
@@ -1043,6 +1191,7 @@ enum CheckpointState {
 pub struct CheckpointedTesting {
   common: CommonTestingPhaseStore,
   last_checkpoint: CheckpointState,
+  output_generator: Arc<TestOutputPathGen>,
   // test item & the command line
   // presence (as a whole)           => Perform checkpoint
   // presence of command line vector => Start from scratch, don't checkpoint
@@ -1125,7 +1274,6 @@ impl CheckpointedTesting {
 
     Ok(true)
   }
-  pub fn run_until_checkpointed() {}
 }
 
 impl TestingPhase for CheckpointedTesting {
@@ -1192,7 +1340,6 @@ impl TestingPhase for CheckpointedTesting {
         meta.clone(),
         self.common.params.infra,
         tst,
-        cmd.as_deref(),
         self.common.output_generator.clone(),
       );
 
@@ -1201,6 +1348,10 @@ impl TestingPhase for CheckpointedTesting {
         Ok(stages::testing::TestStatus::Fatal(e)) => bail!("Failed checkpoint: {e}"),
         _ => (),
       };
+
+      if let Some(x) = self.common.output_generator.as_ref() {
+        x.store_after_checkpoint(tst.uid.module_id, tst.uid.function_id, tst)?;
+      }
     }
 
     // after checkpoint case is done (checkpoint should exist under the ID)
@@ -1217,11 +1368,10 @@ impl TestingPhase for CheckpointedTesting {
         .ok_or(anyhow!("Inconsistent test registry"))?;
       lg.trace(format!("Start test {tst:?}"));
 
-      let test_job = singular_test_job(
+      let test_job = singular_restore_job(
         meta.clone(),
         self.common.params.infra,
         tst,
-        cmd,
         self.common.output_generator.clone(),
       );
 

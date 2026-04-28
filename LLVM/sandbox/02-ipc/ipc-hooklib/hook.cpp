@@ -419,6 +419,13 @@ static void pre_test_setup(uint32_t module_id, uint32_t function_id,
   }
 }
 
+// testing mode-related decisions must be made exclusively when running in MT-environment
+// due to the checkpointing nature:
+// if a restore happens "from a thread (TX)" and a different thread (TZ) would access the
+// testing mode before TX can "retarget it", we could lose non-zero testing calls purely
+// due to this mis-timed decision
+static std::mutex s_testing_mode_retarget_mutex;
+
 // sets up the testing environment for the MT support mode testing
 static void multithread_test_setup() {
   void *packet_ptr = nullptr;
@@ -457,7 +464,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // but the behavior should remain the same (call counts, ...)
 
   if (mt_compat_testing()) {
-    multithread_test_setup();
+    multithread_test_setup(); 
     // go back and hijack arguments
     return;
   }
@@ -529,7 +536,7 @@ thread_local google::protobuf::Arena s_arena;
 // # in call tracing, the mutex is used to make the pair (Module ID, Function
 // ID) transferred atomically without interleavings with other threads' ID
 // transfers
-std::mutex s_data_push_mutex;
+static std::mutex s_data_push_mutex;
 
 void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   // CONTEXT TO KEEP IN MIND:
@@ -547,6 +554,16 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
         google::protobuf::Arena::Create<::llcaproto::Arguments>(&s_arena);
     // the rest of this function concerns only the testing mode
     return;
+  }
+  
+  std::unique_lock<std::mutex> guard{s_testing_mode_retarget_mutex};
+  if (performs_retarget()) {
+    // locks this section as a retarget might happen
+    // read more at s_testing_mode_retarget_mutex 
+    guard.lock();
+    // note that performs_retarget is only true for when checkpointing happens
+    // this means that perform_testing returns (in checkpointing mode testing phase does not fork)
+    // and this lock will thus be unlocked by leaving the scope or terminating
   }
 
   // in testing mode we discriminate based on the function that is under the

@@ -11,7 +11,7 @@
 #define SEMPERMS (S_IROTH | S_IWOTH | S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR)
 
 bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
-                      const char *shm_name, const char *shm_size_name, bool (handler)(const void* source, uint32_t size), uint32_t max_size) {
+                      const char *shm_name, const char *shm_size_name, bool (handler)(const void* source, uint32_t size, void* extra), uint32_t max_size, void* extra_data) {
   // initialize channel semaphores
   // we have 2 - the "data available" semaphore and an "ack" semaphore (signals
   // we read the data and are ready to proceed)
@@ -62,7 +62,8 @@ bool oneshot_shm_read(const char *data_sem_name, const char *ack_sem_name,
     goto close_sem;
   }
 
-  rv = handler(source, sz_to_alloc);
+  rv = handler(source, sz_to_alloc, extra_data);
+
   if(!rv) {
     printf("Memhandler failed\n");
   }

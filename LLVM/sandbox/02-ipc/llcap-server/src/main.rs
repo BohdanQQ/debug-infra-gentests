@@ -251,7 +251,7 @@ async fn main() -> Result<()> {
         (ready_tx, end_rx),
         results.clone(),
       ));
-      let output_gen = Arc::new(TestOutputPathGen::new(test_output));
+      let output_gen = Arc::new(TestOutputPathGen::make(test_output)?);
       // wait for server to be ready
       match tokio::time::timeout(Duration::from_secs(10), ready_rx).await {
         Ok(Ok(())) => lg.trace("Server ready"),

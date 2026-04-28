@@ -18,6 +18,7 @@
 #include <semaphore.h>
 #include <thread>
 #include <threads.h>
+#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -44,7 +45,7 @@ static unsigned int s_call_countdown;
 
 static WriteChannel s_channel;
 
-static bool populate_static_metadata(const void *source, uint32_t size) {
+static bool populate_static_metadata(const void *source, uint32_t size, [[maybe_unused]] void* data) {
   if (size < sizeof(s_buff_info)) {
     std::println("Unexpected size %u, expected %lu\n", size,
                  sizeof(s_buff_info));
@@ -63,17 +64,20 @@ static bool populate_static_metadata(const void *source, uint32_t size) {
   if constexpr (DBG) {
     std::print("Mode: ");
     switch (s_buff_info.mode) {
-    case 0:
+    case MODE_CALL_TRACE:
       std::println("call trace");
       break;
-    case 1:
+    case MODE_ARG_CAPTURE:
       std::println("argument capture");
       break;
-    case 2:
+    case MODE_TESTING:
       std::println("testing");
       break;
-    case 3:
-      std::println("testing - MT compat");
+    case MODE_CHECKPOINT_TESTING_NOCHECKPOINT:
+      std::println("testing - no checkpoint");
+      break;
+    case MODE_CHECKPOINT_TESTING_DO_CHECKPOINT:
+      std::println("testing - checkpoint");
       break;
     default:
       std::println("{}", s_buff_info.mode);
@@ -97,7 +101,26 @@ static bool populate_static_metadata(const void *source, uint32_t size) {
 static bool get_buffer_info() {
   return oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME,
                           META_MEM_SIZE_NAME, populate_static_metadata,
-                          1024U * 1024U * 1024U * 2U);
+                          1024U * 1024U * 1024U * 2U, nullptr);
+}
+
+template<typename T>
+concept Trivial
+    = std::is_trivially_copyable_v<T>;
+
+template<Trivial T>
+static bool receive_checkpoint_fixed_data(const void* source, uint32_t size, void* target) {
+  if (size != sizeof(T)) {
+    std::println(std::cerr, "Reinit: invalid size received");
+    return false;
+  } else if (target == nullptr) {
+    std::println(std::cerr, "Reinit: invalid arg");
+    return false;
+  }
+
+  memcpy(target, source, size);
+
+  return true;
 }
 
 thread_local std::optional<uint32_t> t_logical_id = std::nullopt;
@@ -131,11 +154,14 @@ uint64_t get_thread_lid() {
 // Encapsulates the querying over call counts in the multithreaded-support mode
 // only one global instance shall exist
 class CallCounter {
+  // count-down vector
   std::vector<uint64_t> m_counts;
+  // count-up vector (FIXME: can probably be just the count-up vector)
+  std::vector<uint64_t> m_aux_counts;
 
 public:
   explicit CallCounter(std::vector<uint64_t> &&counts)
-      : m_counts(std::move(counts)) {}
+      : m_counts(std::move(counts)), m_aux_counts(m_counts.size(), 0) {}
 
   void register_call() {
     auto logId = ensure_logical_id();
@@ -154,10 +180,11 @@ public:
       if constexpr (DBG) {
         std::println("Registered {} @ {}", logId, m_counts[logId]);
       }
-      // s_call_countdown 0 means, that the testing has already been performed
+      // m_counts[logId] 0 means, that the testing has already been performed
       // 1 means we will be testing the call that caused register_call to be
       // called otherwise "we are not at the desired call yet"
       m_counts[logId]--;
+      ++m_aux_counts[logId];
     }
   }
 
@@ -175,6 +202,26 @@ public:
   bool should_hijack_arg() {
     auto id = ensure_logical_id();
     return is_lid_tested() && m_counts[id] == 1;
+  }
+
+  struct SRetargetInfo {
+    unsigned int target_lid;
+    unsigned long long new_target_call;
+    unsigned int new_mode;
+  };
+
+  // this must be true as the shared memory where this data is trasferred is
+  // initialized to the size of ShmMeta by the llcap-server 
+  static_assert(sizeof(SRetargetInfo) <= sizeof(ShmMeta));
+
+  // adjusts the internal state after checkpoint_restore
+  void retarget_after_restore(SRetargetInfo info) {
+    s_buff_info.target_thread_lid = info.target_lid;
+    if (m_aux_counts[info.target_lid] > info.new_target_call) {
+      std::println(std::cerr, "warning: requested call number target won't be hit!");
+    }
+    m_counts[info.target_lid] = std::max(0ULL, info.new_target_call - m_aux_counts[info.target_lid]);
+    s_buff_info.mode = info.new_mode;
   }
 
   static bool is_lid_tested() {
@@ -270,17 +317,36 @@ void deinit(void) {
   deinit_channel(&s_channel);
 }
 
-bool in_testing_mode(void) {
-  return s_buff_info.mode == 2 || s_buff_info.mode == 3;
+static unsigned int test_mode() { return s_buff_info.mode; }
+
+bool performs_retarget() {
+  const auto mode = test_mode();
+  return mode == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT;
 }
 
-// TODO
+bool in_testing_mode(void) {
+  auto mode = test_mode();
+  return mode == MODE_TESTING || mode == MODE_MT_TESTING || mode == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT || mode == MODE_CHECKPOINT_TESTING_NOCHECKPOINT;
+}
+
 bool shall_perform_checkpoint() {
-  return false && mt_compat_testing() && s_buff_info.checkpoint_dump_dir != nullptr &&
-         s_buff_info.checkpoint_id != 0ULL;
+  return performs_retarget() && s_buff_info.checkpoint_dump_dir[0] != 0 &&
+         s_buff_info.checkpoint_id != 0ULL && CallCounter::is_lid_tested() && test_mode() == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT;
+}
+
+static std::optional<CallCounter::SRetargetInfo> get_retarget_data() {
+    CallCounter::SRetargetInfo rv;
+    bool readres = oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME,
+                          META_MEM_SIZE_NAME, receive_checkpoint_fixed_data<CallCounter::SRetargetInfo>,
+                          1024U * 1024U * 1024U * 2U, &rv);
+    return readres ? std::optional{rv} : std::nullopt;
 }
 
 bool perform_checkpoint() {
+  if (!mt_compat_testing()) {
+    std::println(std::cerr, "Unexpected mode");
+    return false;
+  }
   // normally, we would like to "deinitialize" every single shared resource
   // (e.g. the shared memory mapping)
   // but since checkpointing is a testing-only feature and we don't use
@@ -294,12 +360,28 @@ bool perform_checkpoint() {
   }
 
   // likewise, as we did not deinit anything, we don't need to reinit anything
-  // server connectino will be established as per our normal testing protocol
+  // server connection will be established as per our normal testing protocol
 
+  if (*rv) {
+    // we just need to retarget the test run if we have been restored from a checkpoint
+    auto retarget_data = get_retarget_data();
+    if (!retarget_data) {
+      std::println(std::cerr, "Failed restore");
+      return false;
+    }
+    s_call_countdown_instance->retarget_after_restore(*retarget_data);
+  }
+
+  if constexpr (DBG) {
+    std::println("unlocking retarget mtx");
+  }
   return true;
 }
 
-bool mt_compat_testing() { return s_buff_info.mode == 3; }
+bool mt_compat_testing() { 
+  auto mode = test_mode();
+  return mode == MODE_MT_TESTING || mode == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT || mode == MODE_CHECKPOINT_TESTING_NOCHECKPOINT; 
+}
 
 bool in_testing_fork(void) { return s_buff_info.forked != 0; }
 uint16_t get_test_tout_secs(void) {
@@ -321,6 +403,7 @@ uint32_t get_call_num(void) {
 
   return s_buff_info.target_call_number + 1 - s_call_countdown;
 }
+
 void register_call(void) {
   if (mt_compat_testing()) {
     s_call_countdown_instance->register_call();
