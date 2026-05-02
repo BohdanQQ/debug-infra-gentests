@@ -3,7 +3,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail, ensure};
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -39,8 +39,7 @@ use crate::{
     },
     test_registry::TestingMode,
     testing::{
-      BasicTesting, LogResult, MTSupportTesting, PartialRegistryItem, TestJobFailure,
-      TestOutputPathGen, TestStatus, TestingPhase,
+      BasicTesting, CheckpointedTesting, LogResult, MTSupportTesting, PartialRegistryItem, TestJobFailure, TestOutputPathGen, TestStatus, TestingPhase
     },
   },
 };
@@ -213,7 +212,7 @@ async fn main() -> Result<()> {
       inspect_packets: inspect_packet,
       report,
       detailed_report,
-      mt_support,
+      testing_mode
     } => {
       let command = Arc::new(command);
       lg.progress("Reading function selection");
@@ -251,7 +250,6 @@ async fn main() -> Result<()> {
         (ready_tx, end_rx),
         results.clone(),
       ));
-      let output_gen = Arc::new(TestOutputPathGen::make(test_output)?);
       // wait for server to be ready
       match tokio::time::timeout(Duration::from_secs(10), ready_rx).await {
         Ok(Ok(())) => lg.trace("Server ready"),
@@ -283,40 +281,64 @@ async fn main() -> Result<()> {
             continue;
           }
 
-          if mt_support {
-            let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
-            run_test_case(
-              p,
-              command.clone(),
-              PartialRegistryItem {
-                uid,
-                test_count,
-                test_case_timeout,
-                global_timeout,
-                thread_counts: thread_counts.clone(),
-              },
-              metadata_svr.clone(),
-              results.clone(),
-              &mut errors,
-            )
-            .await
-          } else {
-            let p = BasicTesting::new(common_params.clone(), output_gen.clone());
-            run_test_case(
-              p,
-              command.clone(),
-              PartialRegistryItem {
-                uid,
-                test_count,
-                test_case_timeout,
-                global_timeout,
-                thread_counts: thread_counts.clone(),
-              },
-              metadata_svr.clone(),
-              results.clone(),
-              &mut errors,
-            )
-            .await
+          match testing_mode {
+            args::TestingMode::Basic => {
+                    let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+              let p = BasicTesting::new(common_params.clone(), output_gen.clone());
+              run_test_case(
+                p,
+                command.clone(),
+                PartialRegistryItem {
+                  uid,
+                  test_count,
+                  test_case_timeout,
+                  global_timeout,
+                  thread_counts: thread_counts.clone(),
+                },
+                metadata_svr.clone(),
+                results.clone(),
+                &mut errors,
+              )
+              .await
+            },
+            args::TestingMode::MTSupport => {
+                    let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+              let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
+              run_test_case(
+                p,
+                command.clone(),
+                PartialRegistryItem {
+                  uid,
+                  test_count,
+                  test_case_timeout,
+                  global_timeout,
+                  thread_counts: thread_counts.clone(),
+                },
+                metadata_svr.clone(),
+                results.clone(),
+                &mut errors,
+              )
+              .await
+            }
+            args::TestingMode::CRIU => {
+                    let output_gen = TestOutputPathGen::make(test_output.clone())?;
+              ensure!(output_gen.is_some(), "Output must be specified");
+              let output_gen  = Arc::new(output_gen.unwrap());
+              let mut p = CheckpointedTesting::new(common_params.clone(), output_gen);
+              while let Some(()) = p.next_batch() {
+                p.prepare_cases(&command, &PartialRegistryItem {
+                  uid,
+                  test_count,
+                  test_case_timeout,
+                  global_timeout,
+                  thread_counts: thread_counts.clone(),
+                })?;
+                let (oks, fails) = p.run_tests(metadata_svr.clone()).await?;
+                results.lock().unwrap().extend_from_slice(&oks);
+                errors.extend_from_slice(&fails);
+              }
+              Ok(())
+            },
           }?;
         }
       }
@@ -345,11 +367,6 @@ async fn main() -> Result<()> {
               }
             };
             let mut merged_results = merge_results(
-              if mt_support {
-                TestingMode::MTCompatTesting
-              } else {
-                TestingMode::Testing
-              },
               unwrapped_res,
             );
             report_results(log_out, &mut merged_results, errors).await
@@ -377,7 +394,7 @@ async fn main() -> Result<()> {
 // Exit/Signal
 // Fatal
 // Spurious
-fn merge_results(_mode: TestingMode, results: Vec<LogResult>) -> Vec<LogResult> {
+fn merge_results(results: Vec<LogResult>) -> Vec<LogResult> {
   let status_prio = |st: &TestStatus| -> u8 {
     match st {
       TestStatus::Pass | TestStatus::Exception => 100,

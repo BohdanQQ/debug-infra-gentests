@@ -15,7 +15,8 @@ use crate::libc_wrappers::wrappers::to_cstr;
 use crate::log::Log;
 use crate::modmap::ExtModuleMap;
 use crate::shmem_capture::hooklib_commons::{
-  CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT, MODE_CHECKPOINT_TESTING_NOCHECKPOINT, MODE_MT_TESTING, MODE_TESTING
+  CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO, MODE_CHECKPOINT_TESTING_DO_CHECKPOINT,
+  MODE_CHECKPOINT_TESTING_NOCHECKPOINT, MODE_MT_TESTING, MODE_TESTING,
 };
 use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
@@ -542,18 +543,26 @@ pub fn send_test_metadata(
   chnl: &mut MetadataPublisher,
   infra: InfraParams,
   test: &TestRegisryItem,
-  checkpoint_path: Option<&str>
+  checkpoint_path: Option<&str>,
 ) -> Result<()> {
   let checkpoint_id = test.call_index.0 as u64 * 1000 * 1000 * 1000
     + test.packet_index.0 * 1000 * 1000
     + test.target_call_number() as u64;
-    const MAX_CHARS : usize  =( CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO - 1) as usize;
-  
+  const MAX_CHARS: usize = (CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO - 1) as usize;
+
   let checkpoint_path = checkpoint_path.or(Some("")).unwrap();
-  ensure!(checkpoint_path.bytes().len() <= MAX_CHARS, "Path to CRIU dumps too long!");
-  
-  let v : Vec<i8> = checkpoint_path.as_bytes().iter().take(MAX_CHARS as usize).map(|v| *v as i8).collect::<Vec<i8>>();
-  let mut dump_dir : [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
+  ensure!(
+    checkpoint_path.bytes().len() <= MAX_CHARS,
+    "Path to CRIU dumps too long!"
+  );
+
+  let v: Vec<i8> = checkpoint_path
+    .as_bytes()
+    .iter()
+    .take(MAX_CHARS as usize)
+    .map(|v| *v as i8)
+    .collect::<Vec<i8>>();
+  let mut dump_dir: [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
   dump_dir.copy_from_slice(v.as_slice());
 
   send_metadata(

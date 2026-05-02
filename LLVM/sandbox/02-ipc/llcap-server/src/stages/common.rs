@@ -145,7 +145,7 @@ pub fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
   }
 }
 
-pub fn cmd_from_args(args: &[String]) -> Result<Command> {
+pub fn cmd_from_args<T: AsRef<std::ffi::OsStr>>(args: &[T]) -> Result<Command> {
   ensure!(!args.is_empty(), "Command must be specified");
   let mut cmd = tokio::process::Command::new(args.first().unwrap());
   cmd.args(args.iter().skip(1));

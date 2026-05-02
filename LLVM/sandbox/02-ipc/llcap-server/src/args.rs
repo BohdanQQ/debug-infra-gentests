@@ -134,9 +134,14 @@ pub enum Stage {
     #[arg(short, long, default_value = Constants::default_capture_out_path())]
     capture_dir: PathBuf,
 
-    /// support multithreaded testing (slower)
-    #[arg(long = "mt")]
-    mt_support: bool,
+    // TODO: adapt tests
+    // /// support multithreaded testing (slower)
+    // #[arg(long = "mt")]
+    // mt_support: bool,
+
+    /// mode
+    #[arg(long = "mode")]
+    testing_mode: TestingMode,
 
     /// Redirects output to a file or a directory instead of the standard output (target directory must exist beforehand otherwise the path is treated as a file path)
     #[arg(short = 'o', long)]
@@ -171,4 +176,12 @@ pub enum Stage {
     #[arg(short = 'l', long, default_value = "0")]
     mem_limit: u32,
   },
+}
+
+
+#[derive(Clone, Eq, PartialEq, Debug, clap::ValueEnum)]
+pub enum TestingMode {
+  Basic,
+  MTSupport,
+  CRIU,
 }
