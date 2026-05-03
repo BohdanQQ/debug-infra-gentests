@@ -1,3 +1,3 @@
 #!/bin/bash
 
-../llcap-server/target/debug/llcap-server --modmap ./ --cleanup test
+../llcap-server/target/debug/llcap-server -vvvvv --modmap ./ --cleanup test
