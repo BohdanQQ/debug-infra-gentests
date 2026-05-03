@@ -492,6 +492,7 @@ pub fn send_call_tracing_metadata(chnl: &mut MetadataPublisher, infra: InfraPara
       target_thread_lid: 0,
       checkpoint_dump_dir: [0; 512],
       checkpoint_id: 0,
+      shell_job: 0,
     },
   )
 }
@@ -514,6 +515,7 @@ pub fn send_arg_capture_metadata(chnl: &mut MetadataPublisher, infra: InfraParam
       target_thread_lid: 0,
       checkpoint_dump_dir: [0; 512],
       checkpoint_id: 0,
+      shell_job: 0,
     },
   )
 }
@@ -593,6 +595,7 @@ pub fn send_test_metadata(
       target_thread_lid: test.thread_lid.0 as u32,
       checkpoint_dump_dir: dump_dir,
       checkpoint_id,
+      shell_job: 1,
     },
   )
 }

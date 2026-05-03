@@ -52,6 +52,9 @@ typedef struct ShmMeta {
   unsigned int target_thread_lid;
   const char checkpoint_dump_dir[CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO];
   unsigned long long checkpoint_id;
+  // 0 - false
+  // nonzero - true
+  int shell_job;
 } ShmMeta;
 // NOLINTEND(modernize-use-using)
 

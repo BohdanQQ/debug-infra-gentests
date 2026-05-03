@@ -665,6 +665,14 @@ pub async fn singular_restore_job(
   // prepare the "command", mainly the std out/err
   let mut cmd = cmd_from_args(&["criu", "restore", "-D", &restore_path])
     .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
+  cmd
+    .stderr(Stdio::null())
+    .stdin(Stdio::null())
+    .stdout(Stdio::null());
+
+  // the below is false, FIXME -> use real paths
+  // the reason for those is the need to create an independent process
+  // so that CRIU can restore later 
   // descriptors are not created - they are created by CRIU
 
   // launch the restore
@@ -693,6 +701,7 @@ pub async fn singular_restore_job(
   }
 }
 
+#[derive(Debug)]
 pub enum CheckpointJobMode<'a> {
   /// spawning a new job from a command line and a start index
   New(&'a [String], usize),
@@ -749,7 +758,7 @@ pub async fn singular_checkpointing_job(
       None,
     ));
   }
-  let lg = Log::get("singular_restore_job");
+  let lg = Log::get("singular_checkpointing_job");
   // lambda transforming the test errors to proper return values
   let mk_error = |error: anyhow::Error, status: TestStatus| {
     TestJobFailure::from_test(test, error.to_string(), Some(status))
@@ -800,30 +809,33 @@ pub async fn singular_checkpointing_job(
         .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
       let out_path = output_gen.get_out_path(test);
       let err_path = output_gen.get_err_path(test);
-      cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
-        |e| {
+      lg.trace(format!("Job {test:?} outputs: {out_path:?}, {err_path:?}"));
+      cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(File::create(out_path.clone()).map_err(
+          |e| {
+            mk_error(
+              anyhow!("Stdout file creation failed: {e} {out_path:?}"),
+              TestStatus::Fatal("Stdout create".to_owned()),
+            )
+          },
+        )?))
+        .stderr(Stdio::from(File::create(err_path).map_err(|e| {
           mk_error(
-            anyhow!("Stdout file creation failed: {e} {out_path:?}"),
-            TestStatus::Fatal("Stdout create".to_owned()),
+            anyhow!("Stderr file creation failed {e} {out_path:?}"),
+            TestStatus::Fatal("Stderr create".to_owned()),
           )
-        },
-      )?));
-      cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
-        mk_error(
-          anyhow!("Stderr file creation failed {e} {out_path:?}"),
-          TestStatus::Fatal("Stderr create".to_owned()),
-        )
-      })?));
+        })?));
 
       let test_process = cmd.spawn().map_err(|e| {
         mk_error(
-          anyhow!("spawn restore from command: {e}"),
+          anyhow!("spawn checkpoint from command: {e}"),
           TestStatus::Fatal("Spawn".to_owned()),
         )
       })?;
 
       lg.progress(format!(
-        "PID of the restored program: {:?}",
+        "PID of the checkpointed program: {:?}",
         test_process.id()
       ));
 
@@ -980,8 +992,8 @@ impl TestOutputPathGen {
     let temp_out = self.tmp_dir.join(from_out.file_name().unwrap());
     let temp_err = self.tmp_dir.join(from_err.file_name().unwrap());
 
-    std::fs::copy(from_out, temp_out).or(Err(anyhow!("Checkpoint copy, out")))?;
-    std::fs::copy(from_err, temp_err).or(Err(anyhow!("Checkpoint copy, err")))?;
+    std::fs::copy(from_out, temp_out).map_err(|e| anyhow!("Checkpoint copy, out: {e}"))?;
+    std::fs::copy(from_err, temp_err).map_err(|e| anyhow!("Checkpoint copy, err: {e}"))?;
     Ok(())
   }
 
@@ -993,8 +1005,11 @@ impl TestOutputPathGen {
     let temp_out = self.tmp_dir.join(renew_out.file_name().unwrap());
     let temp_err = self.tmp_dir.join(renew_err.file_name().unwrap());
 
-    std::fs::copy(temp_out, renew_out).or(Err(anyhow!("Checkpoint restore, out")))?;
-    std::fs::copy(temp_err, renew_err).or(Err(anyhow!("Checkpoint restore, err")))?;
+    std::fs::copy(&temp_out, &renew_out).map_err(|e| {
+      anyhow!("Checkpoint restore, out: {e}, from: {temp_out:?}, to: {renew_out:?}")
+    })?;
+    std::fs::copy(&temp_err, &renew_err)
+      .map_err(|e| anyhow!("Checkpoint restore, err {e}, from: {temp_err:?}, to: {renew_err:?}"))?;
     Ok(())
   }
 }
@@ -1060,7 +1075,7 @@ pub fn inspect_packet(
   }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PartialRegistryItem {
   pub uid: NumFunUid,
   pub test_count: u32,
@@ -1302,7 +1317,7 @@ impl TestingPhase for BasicTesting {
   }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum CheckpointState {
   Init,
   Checkpoint(u64),
@@ -1341,6 +1356,11 @@ impl CheckpointedTesting {
     partial: &PartialRegistryItem,
   ) -> Result<bool> {
     const STOP: Result<bool> = Ok(false);
+    let lg = Log::get("mk_case");
+    lg.info(format!(
+      "Next from last {:?} partial {partial:?}",
+      self.last_checkpoint
+    ));
     if let CheckpointState::End = self.last_checkpoint {
       self.checkpointing_testcase = None;
       return STOP;
@@ -1398,15 +1418,10 @@ impl CheckpointedTesting {
       cmd.is_some() || self.checkpointing_testcase.is_some(),
       "Unwrap guard"
     );
-    self
-      .checkpointing_testcase
-      .as_mut()
-      .map(|v| {
-        std::mem::swap(&mut v.0, &mut item);
-        v
-      })
-      .get_or_insert(&mut (item, cmd));
+    let mut new_ctcase = Some((item, cmd));
+    mem::swap(&mut self.checkpointing_testcase, &mut new_ctcase);
 
+    lg.trace(format!("{:?}", self.checkpointing_testcase));
     Ok(true)
   }
 }
@@ -1463,6 +1478,7 @@ impl TestingPhase for CheckpointedTesting {
   ) -> Result<(Vec<LogResult>, Vec<TestJobFailure>)> {
     // perform the checkpointing case (normal start when init state)
     // (stored checkpoint case)
+    let lg = Log::get("run_tests<ChPnt>");
     let restoration_idx = {
       ensure!(
         self.checkpointing_testcase.is_some(),
@@ -1475,7 +1491,9 @@ impl TestingPhase for CheckpointedTesting {
         Some(cmdline) => CheckpointJobMode::New(cmdline, tst.call_index.0 as usize),
         None => CheckpointJobMode::Restore(tst.call_index.0 as usize),
       };
-
+      lg.trace(format!(
+        "Starting checkpointing process in mode {checkpoint_mode:?}"
+      ));
       let test_job = singular_checkpointing_job(
         meta.clone(),
         self.common.params.infra,
@@ -1484,15 +1502,16 @@ impl TestingPhase for CheckpointedTesting {
         checkpoint_mode,
       );
 
-      match test_job.await {
+      let job_res = test_job.await;
+      lg.trace(format!("Chekpoint finished in state {job_res:?}"));
+      match job_res {
         Err(e) => bail!("Failed checkpoint: {e:?}"),
-        Ok(stages::testing::TestStatus::Fatal(e)) => bail!("Failed checkpoint: {e}"),
+        Ok(TestStatus::Fatal(e)) => bail!("Failed checkpoint: {e}"),
+        Ok(TestStatus::Exit(242)) => bail!("Failed checkpoint - see job output"),
         _ => (),
       };
 
-      if let Some(x) = self.common.output_generator.as_ref() {
-        x.store_after_checkpoint(tst)?;
-      }
+      self.output_generator.store_after_checkpoint(tst)?;
       tst.call_index.0
     };
 
@@ -1503,7 +1522,6 @@ impl TestingPhase for CheckpointedTesting {
     let test_reg = &self.common.test_registry;
     let mut errors: Vec<TestJobFailure> = vec![];
     let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
-    let lg = Log::get("run_tests<CheckpointedTesting>");
     for test in &self.common.tests {
       let (tst, _) = test_reg
         .get_test_params(*test)

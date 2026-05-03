@@ -9,6 +9,10 @@
 #include <string>
 #include <sys/types.h>
 #include <unistd.h>
+#include "debug.hpp"
+#include <print>
+#include <format>
+#include <iostream>
 
 /* NOTES:
 
@@ -77,7 +81,7 @@ static std::string criu_err_msg(int ret) {
  */
 static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
                                                 const std::string &criuSockPath,
-                                                const std::string &logId) {
+                                                const std::string &logId, bool shellJob) {
   using err = std::unexpected<std::string>;
   std::filesystem::path logPath;
   try {
@@ -88,6 +92,9 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
     }
   } catch (...) {
     return err("invalid log path - system");
+  }
+  if constexpr (DBG) {
+    std::cerr << std::format("Configuring Checkpoint... dump dir: {}, criu socket path: {}, log id: {}", dumpDir, criuSockPath, logId) << std::endl;
   }
 
   criu_opts *opts = nullptr;
@@ -111,6 +118,7 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
   if (0 != rv) {
     return errmsg("Log path");
   }
+  criu_local_set_shell_job(opts, shellJob);
   criu_local_set_log_level(opts, 4); // max
   return opts;
 }
@@ -124,11 +132,11 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
  * Expected value is a result indicating whether restore took place
  */
 SResult<bool> performCheckpoint(const std::string &criuDumpDir,
-                                uint64_t criuLogId) {
+                                uint64_t criuLogId, bool shellJob) {
   std::stringstream idStrStream;
   idStrStream << std::hex << criuLogId;
   auto cfgRes =
-      configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH, idStrStream.str());
+      configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH, idStrStream.str(), shellJob);
   if (!cfgRes) {
     return std::unexpected(cfgRes.error());
   }

@@ -1,4 +1,5 @@
 #include "hook.h"
+#include "debug.hpp"
 #include "llcap_state.h"
 #include "protoTraits.hpp"
 #include "protobuf/proto/main.pb.h"
@@ -400,7 +401,7 @@ static void pre_test_setup(uint32_t module_id, uint32_t function_id,
                            uint32_t call_idx) {
   if (shall_perform_checkpoint()) {
     if (!perform_checkpoint()) {
-      std::cerr << "Failed to checkpoint" << std::endl;
+      std::cerr << "Failed to restore/checkpoint" << std::endl;
       std::exit(HOOKLIB_EC_CHCKPNT);
     }
   }
@@ -557,12 +558,15 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
     return;
   }
   
-  std::unique_lock<std::mutex> guard{s_testing_mode_retarget_mutex};
+  std::unique_lock<std::mutex> guard;
   bool locked{false};
   if (performs_retarget()) {
+    if constexpr (DBG) {
+      std::cerr << "Locking..." << std::endl;
+    }
     // locks this section as a retarget might happen
     // read more at s_testing_mode_retarget_mutex 
-    guard.lock();
+    guard = std::unique_lock{s_testing_mode_retarget_mutex};
     locked = true;
     // note that performs_retarget is only true for when checkpointing happens
     // this means that perform_testing returns (in checkpointing mode testing phase does not fork)

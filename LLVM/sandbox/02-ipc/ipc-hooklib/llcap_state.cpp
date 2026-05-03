@@ -23,6 +23,12 @@
 #include <unistd.h>
 #include <vector>
 
+struct SRetargetInfo {
+  unsigned int target_lid;
+  unsigned long long new_target_call;
+  unsigned int new_mode;
+};
+
 constexpr int ID_FAILURE{229};
 constexpr int PUSH_FALURE{230};
 
@@ -90,21 +96,21 @@ static bool get_buffer_info() {
                           1024U * 1024U * 1024U * 2U, nullptr);
 }
 
-template<typename T>
-concept Trivial
-    = std::is_trivially_copyable_v<T>;
-
-template<Trivial T>
-static bool receive_checkpoint_fixed_data(const void* source, uint32_t size, void* target) {
-  if (size != sizeof(T)) {
-    std::println(std::cerr, "Reinit: invalid size received");
+static bool receive_retarget_data(const void* source, uint32_t size, void* target) {
+  if (size != sizeof(ShmMeta)) {
+    std::println(std::cerr, "Reinit: invalid size received: {}, expected {}", size, sizeof(ShmMeta));
     return false;
   } else if (target == nullptr) {
-    std::println(std::cerr, "Reinit: invalid arg");
+    std::println(std::cerr, "Reinit: invalid arg (null)");
     return false;
   }
+  ShmMeta shm{};
+  memcpy(&shm, source, size);
 
-  memcpy(target, source, size);
+  SRetargetInfo* rtg = reinterpret_cast<SRetargetInfo*>(target);
+  rtg->new_target_call = shm.target_call_number;
+  rtg->target_lid = shm.target_thread_lid;
+  rtg->new_mode = shm.mode;
 
   return true;
 }
@@ -190,15 +196,11 @@ public:
     return is_lid_tested() && m_counts[id] == 1;
   }
 
-  struct SRetargetInfo {
-    unsigned int target_lid;
-    unsigned long long new_target_call;
-    unsigned int new_mode;
-  };
-
   // this must be true as the shared memory where this data is trasferred is
   // initialized to the size of ShmMeta by the llcap-server 
-  static_assert(sizeof(SRetargetInfo) <= sizeof(ShmMeta));
+  // we just send shmmeta struct now, mapping it to the retargetinfo
+  // FIXME - remove
+  // static_assert(sizeof(SRetargetInfo) <= sizeof(ShmMeta));
 
   // adjusts the internal state after checkpoint_restore
   void retarget_after_restore(SRetargetInfo info) {
@@ -318,10 +320,10 @@ bool shall_perform_checkpoint() {
          s_buff_info.checkpoint_id != 0ULL && CallCounter::is_lid_tested() && test_mode() == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT;
 }
 
-static std::optional<CallCounter::SRetargetInfo> get_retarget_data() {
-    CallCounter::SRetargetInfo rv;
+static std::optional<SRetargetInfo> get_retarget_data() {
+    SRetargetInfo rv;
     bool readres = oneshot_shm_read(META_SEM_DATA, META_SEM_ACK, META_MEM_NAME,
-                          META_MEM_SIZE_NAME, receive_checkpoint_fixed_data<CallCounter::SRetargetInfo>,
+                          META_MEM_SIZE_NAME, receive_retarget_data,
                           1024U * 1024U * 1024U * 2U, &rv);
     return readres ? std::optional{rv} : std::nullopt;
 }
@@ -337,7 +339,7 @@ bool perform_checkpoint() {
   // shared memory (after initialization) in the testing phase, we don't need to
   // do anything here
   auto rv = performCheckpoint(s_buff_info.checkpoint_dump_dir,
-                              s_buff_info.checkpoint_id);
+                              s_buff_info.checkpoint_id, s_buff_info.shell_job != 0);
   if (!rv) {
     std::println(std::cerr, "Checkpoint failure: {}", rv.error());
     return false;

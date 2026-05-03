@@ -318,6 +318,13 @@ async fn main() -> Result<()> {
               .await
             }
             args::TestingMode::Criu => {
+              // TODO TODO TODO
+              // TODO TODO TODO
+              // TODO TODO TODO
+              // TODO TODO TODO
+              // Require running as root (restoration requires it)
+              // - or allow nonroot but warn regarding the --unpriviliged option usage
+              // (and propagate the info that the option is used)
               let output_gen = TestOutputPathGen::make(test_output.clone())?;
               ensure!(output_gen.is_some(), "Output must be specified");
               let output_gen = Arc::new(output_gen.unwrap());
