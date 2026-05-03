@@ -7,21 +7,26 @@ function run-test {
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
-  MTArg=$1; shift
+  MTMode=$1; shift
   ExtraArgs=$*; shift;
 
   IRTestScript="$OutTestScript"/ir;
   cd ../
+
+  if [[ "$MTMode" == "" ]]
+  then
+    MTMode="basic"
+  fi
   
   ./llcap-cleanup.sh
-  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "$MTArg" $ExtraArgs
+  ./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "--mode $MTMode" $ExtraArgs
 
   if [[ "$?" != "0" ]]
   then
     echo "Failed test $TestDir with test scripts $OutTestScript and $IRTestScript with cmd ./test.sh ./$TestDir $TestedFnName $Timeout"
     cd ./test
     echo "Cmd:"
-    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" \"$MTArg\" \"$ExtraArgs\""
+    echo "./test.sh ./"$TestDir" "$TestedFnName" "$Timeout" "$OutTestScript" "$IRTestScript" "$LlcapBufSz" "$LlcapBufCnt" "--mode $MTMode" $ExtraArgs"
     exit 1
   fi
   cd ./test
@@ -44,7 +49,7 @@ function run-test-in-directory-custom-buffers-mt {
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" --mt
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support
 }
 
 
@@ -66,7 +71,7 @@ function run-test-in-directory-fn-end-instr-mt {
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
   
-  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" --mt -mllvm -llcap-instrument-fn-exit
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support -mllvm -llcap-instrument-fn-exit
 }
 
 function run-smoke-tests-with-buffers {
@@ -83,7 +88,7 @@ function run-smoke-tests-with-buffers {
 
   # timeout tests
   run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
-  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
+  run-test "testbin-arg-replacement-simple" "timeout-all.sh" "test_target" 0 "$Size" "$Count" mt-support
   
   # larger replacement
   run-test-in-directory-custom-buffers "testbin-arg-replacement-large" "test_target" 5 "$Size" "$Count"
@@ -92,7 +97,7 @@ function run-smoke-tests-with-buffers {
   run-test-in-directory-custom-buffers "testbin-c-example" "test_target" 5 "$Size" "$Count"
   
   run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count"
-  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count" --mt
+  run-test "testbin-c-example" "timeout-all.sh" "test_target" 0 "$Size" "$Count" mt-support
 
   # vector<string> (nested protobuf)
   run-test-in-directory-custom-buffers "testbin-arg-replacement-vec-str" "test_target" 5 "$Size" "$Count"

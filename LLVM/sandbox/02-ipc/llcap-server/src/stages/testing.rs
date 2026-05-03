@@ -6,6 +6,7 @@ use std::{
   os::unix::process::ExitStatusExt,
   path::{Path, PathBuf},
   process::{ExitStatus, Stdio},
+  rc::Rc,
   sync::{Arc, Mutex, atomic::AtomicBool},
   time::Duration,
 };
@@ -559,8 +560,6 @@ pub async fn singular_test_job(
   cmdline: &[&str],
   output_gen: Arc<Option<TestOutputPathGen>>,
 ) -> Result<TestStatus, TestJobFailure> {
-  let (m, f) = (test.uid.module_id, test.uid.function_id);
-  let packet_idx = test.packet_index;
   // lambda transforming the test errors to proper return values
   let mk_error = |error: anyhow::Error, status: TestStatus| {
     TestJobFailure::from_test(test, error.to_string(), Some(status))
@@ -586,7 +585,6 @@ pub async fn singular_test_job(
   let mut cmd = cmd_from_args(cmdline)
     .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
   if let Some(output_gen) = output_gen.as_ref() {
-    let id = test.id();
     let out_path = output_gen.get_out_path(test);
     let err_path = output_gen.get_err_path(test);
     cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
@@ -695,7 +693,7 @@ pub async fn singular_restore_job(
   }
 }
 
-enum CheckpointJobMode<'a> {
+pub enum CheckpointJobMode<'a> {
   /// spawning a new job from a command line and a start index
   New(&'a [String], usize),
   /// restoring a job from a checkpoint index
@@ -732,7 +730,6 @@ pub async fn singular_checkpointing_job(
   output_gen: Arc<TestOutputPathGen>,
   mode: CheckpointJobMode<'_>,
 ) -> Result<TestStatus, TestJobFailure> {
-  let (m, f) = (test.uid.module_id, test.uid.function_id);
   // either we're starting execution or we are restoring and running up until the next checkpoint
   let do_checkpoint = match test.mode {
     stages::test_registry::TestingMode::Testing
@@ -976,12 +973,7 @@ impl TestOutputPathGen {
 
   /// Stores stdout/err to temporary locations after a checkpoint.
   /// The temporary copy is needed for the restoration done later
-  pub fn store_after_checkpoint(
-    &self,
-    m: IntegralModId,
-    f: IntegralFnId,
-    tst: &TestRegisryItem,
-  ) -> Result<()> {
+  pub fn store_after_checkpoint(&self, tst: &TestRegisryItem) -> Result<()> {
     let from_out = self.get_out_path(tst);
     let from_err = self.get_err_path(tst);
     ensure!(from_out.file_name().is_some() && from_err.file_name().is_some());
@@ -1074,7 +1066,7 @@ pub struct PartialRegistryItem {
   pub test_count: u32,
   pub test_case_timeout: Duration,
   pub global_timeout: Option<Duration>,
-  pub thread_counts: Box<Vec<u64>>,
+  pub thread_counts: Rc<Vec<u64>>,
 }
 struct CommonTestingPhaseStore {
   pub test_registry: TestRegistry,
@@ -1326,18 +1318,21 @@ pub struct CheckpointedTesting {
   // presence of command line vector => Start from scratch, don't checkpoint
   // (conversly, restore a checkpoint and retarget if not present)
   checkpointing_testcase: Option<(TestRegisryItem, Option<Vec<String>>)>,
+  total_call_count: usize,
 }
 
 impl CheckpointedTesting {
   pub fn new(
     common_params: Arc<CommonStageParams>,
     out_gen: Arc<TestOutputPathGen>,
+    call_count: usize,
   ) -> Self {
     Self {
       common: CommonTestingPhaseStore::new(common_params, Arc::new(None)),
       last_checkpoint: CheckpointState::Init,
       checkpointing_testcase: None,
-      output_generator: out_gen
+      output_generator: out_gen,
+      total_call_count: call_count,
     }
   }
   fn make_checkpointing_case(
@@ -1496,7 +1491,7 @@ impl TestingPhase for CheckpointedTesting {
       };
 
       if let Some(x) = self.common.output_generator.as_ref() {
-        x.store_after_checkpoint(tst.uid.module_id, tst.uid.function_id, tst)?;
+        x.store_after_checkpoint(tst)?;
       }
       tst.call_index.0
     };
@@ -1510,7 +1505,7 @@ impl TestingPhase for CheckpointedTesting {
     let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
     let lg = Log::get("run_tests<CheckpointedTesting>");
     for test in &self.common.tests {
-      let (tst, cmd) = test_reg
+      let (tst, _) = test_reg
         .get_test_params(*test)
         .ok_or(anyhow!("Inconsistent test registry"))?;
       lg.trace(format!("Start test {tst:?}"));
@@ -1554,11 +1549,16 @@ impl TestingPhase for CheckpointedTesting {
         _ => {}
       }
     }
-    // increment the current call number
-    // TODO: adapt this for TID + CALL_IDX pair
+
     self.last_checkpoint = match self.last_checkpoint {
       CheckpointState::Init => CheckpointState::Checkpoint(1),
-      CheckpointState::Checkpoint(i) => CheckpointState::Checkpoint(i + 1),
+      CheckpointState::Checkpoint(i) => {
+        if i as usize >= self.total_call_count {
+          CheckpointState::End
+        } else {
+          CheckpointState::Checkpoint(i + 1)
+        }
+      }
       CheckpointState::End => self.last_checkpoint,
     };
     Ok((

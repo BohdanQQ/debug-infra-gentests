@@ -1,4 +1,5 @@
 use std::{
+  rc::Rc,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -37,19 +38,16 @@ use crate::{
     common::{
       CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
     },
-    test_registry::TestingMode,
     testing::{
-      BasicTesting, CheckpointedTesting, LogResult, MTSupportTesting, PartialRegistryItem, TestJobFailure, TestOutputPathGen, TestStatus, TestingPhase
+      BasicTesting, CheckpointedTesting, LogResult, MTSupportTesting, PartialRegistryItem,
+      TestJobFailure, TestOutputPathGen, TestStatus, TestingPhase,
     },
   },
 };
 
 // shorthands for the creation of the MetadataPublisher
 
-fn create_meta_svr(
-  params: &CommonStageParams,
-  thread_counters: Option<Vec<u64>>, // TODO: remove (the vec is not read anyway)
-) -> Result<Arc<Mutex<MetadataPublisher>>> {
+fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPublisher>>> {
   let (data_name, size_name) = params.shmem_path_cstr()?;
   Ok(Arc::new(Mutex::new(
     MetadataPublisher::new(
@@ -57,7 +55,6 @@ fn create_meta_svr(
       size_name,
       &params.data_semaphore_name,
       &params.ack_semaphore_name,
-      thread_counters,
     )
     .map_err(|e| anyhow!("{e}\ncleanup required..."))?,
   )))
@@ -111,7 +108,7 @@ async fn main() -> Result<()> {
         let infra_params = common_params.infra;
         let (mut tracing_infra, finalizer_info) =
           TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-        let metadata_svr = create_meta_svr(&common_params, None)?;
+        let metadata_svr = create_meta_svr(&common_params)?;
 
         let result = drive_instrumented_application(
           cmd_from_args(&command)?,
@@ -177,7 +174,7 @@ async fn main() -> Result<()> {
       let infra_params = common_params.infra;
       let (mut tracing_infra, finalizer_info) =
         TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-      let metadata_svr = create_meta_svr(&common_params, None)?;
+      let metadata_svr = create_meta_svr(&common_params)?;
 
       // for comments, see the match arm for the TraceCalls subcommand
       let result = drive_instrumented_application(
@@ -212,7 +209,7 @@ async fn main() -> Result<()> {
       inspect_packets: inspect_packet,
       report,
       detailed_report,
-      testing_mode
+      testing_mode,
     } => {
       let command = Arc::new(command);
       lg.progress("Reading function selection");
@@ -225,7 +222,7 @@ async fn main() -> Result<()> {
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
-      let thread_counts = Box::new(
+      let thread_counts = Rc::new(
         read_thread_counts(&capture_dir)
           .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?,
       );
@@ -257,7 +254,7 @@ async fn main() -> Result<()> {
         Ok(Err(e)) => bail!("server ready error: {}", e),
       }
 
-      let metadata_svr = create_meta_svr(&common_params, Some(*thread_counts.clone()))?;
+      let metadata_svr = create_meta_svr(&common_params)?;
       let mut errors = vec![];
       let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
       let test_case_timeout = Duration::from_secs(timeout as u64);
@@ -283,7 +280,7 @@ async fn main() -> Result<()> {
 
           match testing_mode {
             args::TestingMode::Basic => {
-                    let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+              let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
               let p = BasicTesting::new(common_params.clone(), output_gen.clone());
               run_test_case(
                 p,
@@ -300,9 +297,9 @@ async fn main() -> Result<()> {
                 &mut errors,
               )
               .await
-            },
+            }
             args::TestingMode::MTSupport => {
-                    let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+              let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
               let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
               run_test_case(
                 p,
@@ -320,25 +317,33 @@ async fn main() -> Result<()> {
               )
               .await
             }
-            args::TestingMode::CRIU => {
-                    let output_gen = TestOutputPathGen::make(test_output.clone())?;
+            args::TestingMode::Criu => {
+              let output_gen = TestOutputPathGen::make(test_output.clone())?;
               ensure!(output_gen.is_some(), "Output must be specified");
-              let output_gen  = Arc::new(output_gen.unwrap());
-              let mut p = CheckpointedTesting::new(common_params.clone(), output_gen);
+              let output_gen = Arc::new(output_gen.unwrap());
+              let mut p =
+                CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
               while let Some(()) = p.next_batch() {
-                p.prepare_cases(&command, &PartialRegistryItem {
-                  uid,
-                  test_count,
-                  test_case_timeout,
-                  global_timeout,
-                  thread_counts: thread_counts.clone(),
-                })?;
+                let has_tests = p.prepare_cases(
+                  &command,
+                  &PartialRegistryItem {
+                    uid,
+                    test_count,
+                    test_case_timeout,
+                    global_timeout,
+                    thread_counts: thread_counts.clone(),
+                  },
+                )?;
+                if !has_tests {
+                  break;
+                }
+
                 let (oks, fails) = p.run_tests(metadata_svr.clone()).await?;
                 results.lock().unwrap().extend_from_slice(&oks);
                 errors.extend_from_slice(&fails);
               }
               Ok(())
-            },
+            }
           }?;
         }
       }
@@ -366,9 +371,7 @@ async fn main() -> Result<()> {
                 .await?
               }
             };
-            let mut merged_results = merge_results(
-              unwrapped_res,
-            );
+            let mut merged_results = merge_results(unwrapped_res);
             report_results(log_out, &mut merged_results, errors).await
           }
           Err(_) => Err(anyhow!("Failed to synchronize with the server")),

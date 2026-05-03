@@ -1,5 +1,6 @@
 #include "llcap_state.h"
 #include "checkpoint.hpp"
+#include "debug.hpp"
 #include "protobuf/proto/main.pb.h"
 #include "shm_commons.h"
 #include "shm_oneshot_rx.h"
@@ -22,16 +23,10 @@
 #include <unistd.h>
 #include <vector>
 
-#ifdef DEBUG
-constexpr bool DBG = true;
-#else
-constexpr bool DBG = false;
-#endif
-
 constexpr int ID_FAILURE{229};
 constexpr int PUSH_FALURE{230};
 
-static ShmMeta s_buff_info;
+static ShmMeta s_buff_info{};
 // temporary static space for thread counts that is used during initialization
 static std::vector<uint64_t> s_thread_counts;
 
@@ -47,19 +42,11 @@ static WriteChannel s_channel;
 
 static bool populate_static_metadata(const void *source, uint32_t size, [[maybe_unused]] void* data) {
   if (size < sizeof(s_buff_info)) {
-    std::println("Unexpected size %u, expected %lu\n", size,
+    std::println("Unexpected size {}, expected {}\n", size,
                  sizeof(s_buff_info));
     return false;
   }
   memcpy(&s_buff_info, source, sizeof(s_buff_info));
-  uint32_t expected = s_buff_info.thread_count * sizeof(uint64_t);
-  // note: if expected is zero, nothing will be read
-  // this happens in the original forking mode (metadata publisher tech debt...)
-  if (expected != 0 && sizeof(s_buff_info) + expected != size) {
-    std::println("Unexpected size %u, expected %u + %lu\n", size, expected,
-                 sizeof(s_buff_info));
-    return false;
-  }
 
   if constexpr (DBG) {
     std::print("Mode: ");
@@ -83,11 +70,10 @@ static bool populate_static_metadata(const void *source, uint32_t size, [[maybe_
       std::println("{}", s_buff_info.mode);
     }
 
-    std::println("Thread count: {} {} {}", s_buff_info.thread_count, expected,
-                 size);
+    std::println("Thread count: {}", s_buff_info.thread_count);
   }
 
-  for (uint32_t i = 0; i < expected; ++i) {
+  for (uint32_t i = 0; i < s_buff_info.thread_count; ++i) {
     if (i == s_buff_info.target_thread_lid) {
       s_thread_counts.push_back(s_buff_info.target_call_number);
     } else {
@@ -266,11 +252,9 @@ static int setup_infra(void) {
   info.total_len = s_buff_info.total_len;
 #ifdef DEBUG
   std::println(
-      "Buffer info: cnt %u, len %u, tot %u, mod %u, fn %u, tests %u, args "
-      "%u, mode %u",
+      "Buffer info: cnt {}, len {}, tot {}, mod {}, fn {}, tests {}, mode {}",
       info.buff_count, info.buff_len, info.total_len, s_buff_info.target_modid,
-      s_buff_info.target_fnid, s_buff_info.test_count, s_buff_info.arg_count,
-      s_buff_info.mode);
+      s_buff_info.target_fnid, s_buff_info.test_count, s_buff_info.mode);
 #endif // DEBUG
   if (info.buff_count * info.buff_len != info.total_len) {
     std::println("sanity check failed - buffer sizes");
@@ -371,10 +355,7 @@ bool perform_checkpoint() {
     }
     s_call_countdown_instance->retarget_after_restore(*retarget_data);
   }
-
-  if constexpr (DBG) {
-    std::println("unlocking retarget mtx");
-  }
+  
   return true;
 }
 
@@ -521,7 +502,7 @@ bool send_test_pass_to_monitor(bool exception) {
 int init_finalize_after_crash(const char *name_full_sem, uint32_t buff_count) {
   sem_t *sem_full = sem_open(name_full_sem, O_CREAT, SEMPERMS, 0);
   if (sem_full == SEM_FAILED) {
-    std::println("Failed to initialize FULL semaphore %s\n", name_full_sem);
+    std::println("Failed to initialize FULL semaphore {}\n", name_full_sem);
     perror("");
     return 1;
   }

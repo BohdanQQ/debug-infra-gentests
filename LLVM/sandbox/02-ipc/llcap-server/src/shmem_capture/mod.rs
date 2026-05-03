@@ -5,7 +5,6 @@ pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
 use std::ffi::{self, CStr, c_void};
-use std::ptr::null;
 use std::slice;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -550,20 +549,25 @@ pub fn send_test_metadata(
     + test.target_call_number() as u64;
   const MAX_CHARS: usize = (CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO - 1) as usize;
 
-  let checkpoint_path = checkpoint_path.or(Some("")).unwrap();
+  let checkpoint_path = checkpoint_path.unwrap_or("");
   ensure!(
-    checkpoint_path.bytes().len() <= MAX_CHARS,
+    checkpoint_path.as_bytes().len() <= MAX_CHARS,
     "Path to CRIU dumps too long!"
   );
+
+  let mut dump_dir: [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
 
   let v: Vec<i8> = checkpoint_path
     .as_bytes()
     .iter()
-    .take(MAX_CHARS as usize)
+    .take(MAX_CHARS)
     .map(|v| *v as i8)
     .collect::<Vec<i8>>();
-  let mut dump_dir: [i8; CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO as usize] = [0; 512];
-  dump_dir.copy_from_slice(v.as_slice());
+
+  assert!(v.len() <= MAX_CHARS);
+  v.iter().enumerate().for_each(|(i, val)| {
+    dump_dir[i] = *val;
+  });
 
   send_metadata(
     chnl,
@@ -626,16 +630,11 @@ impl MetadataPublisher {
     size_mem_path: &CStr,
     rdy_sem_path: &str,
     ack_sem_path: &str,
-    thread_ids: Option<Vec<u64>>,
   ) -> Result<Self> {
     let (rdy, ack) = Self::mk_sems(rdy_sem_path, ack_sem_path)?;
 
-    // TODO remove
-    // allocate sizeof(shmemHandle) + (size of the thread_ids data)
-    let to_alloc = std::mem::size_of::<ShmMeta>() as u32;
-    // + thread_ids.map(|v| (v.len() * 8) as u32).unwrap_or(0u32);
-
     // share the size-to-be allocated
+    let to_alloc = std::mem::size_of::<ShmMeta>() as u32;
     let mut size_shm = ShmemHandle::try_mmap(size_mem_path, 4)?;
     {
       let mem = size_shm.borrow_ptr_mut()?;
@@ -703,14 +702,14 @@ impl MetadataPublisher {
     Ok(())
   }
 
-  // TODO: use this for retargeting
+  // TODO: use this for retargeting - do we need this?
   pub fn publish_raw(&mut self, data: &[u8]) -> Result<()> {
     if !self.data_ack_sem.try_wait(Some(5))? {
       bail!("Publish timed out");
     }
 
     {
-      Log::get("MetadataPublisher::publish_raw").trace(format!("Publishing data: {:?}", data));
+      Log::get("MetadataPublisher::publish_raw").trace(format!("Publishing data: {data:?}"));
 
       let mem = self.shm.borrow_ptr_mut()?;
       unsafe {

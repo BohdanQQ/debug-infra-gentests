@@ -32,6 +32,7 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
+#include <print>
 
 #define ENDPASS_CODE 231
 
@@ -557,10 +558,12 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   }
   
   std::unique_lock<std::mutex> guard{s_testing_mode_retarget_mutex};
+  bool locked{false};
   if (performs_retarget()) {
     // locks this section as a retarget might happen
     // read more at s_testing_mode_retarget_mutex 
     guard.lock();
+    locked = true;
     // note that performs_retarget is only true for when checkpointing happens
     // this means that perform_testing returns (in checkpointing mode testing phase does not fork)
     // and this lock will thus be unlocked by leaving the scope or terminating
@@ -582,6 +585,10 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
       // function CHILD process simply continues execution, should_hijack_arg is
       // used further in the type-hijacking functions
     }
+  }
+
+  if (locked) {
+    std::println("unlocking retarget mtx");
   }
 }
 
