@@ -4,7 +4,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Result, anyhow, bail, ensure};
+use anyhow::{Result, anyhow, bail};
 use args::Cli;
 use clap::Parser;
 use log::Log;
@@ -14,18 +14,16 @@ mod constants;
 mod libc_wrappers;
 mod log;
 mod modmap;
+mod phase;
 mod shmem_capture;
 mod sizetype_handlers;
 mod stages;
-use shmem_capture::{
-  MetadataPublisher, arg_capture::perform_arg_capture, call_tracing::perform_call_tracing, cleanup,
-  send_arg_capture_metadata,
-};
+use shmem_capture::{MetadataPublisher, cleanup};
 use stages::{
-  arg_capture::{ArgPacketDumper, PacketReader},
+  arg_capture::PacketReader,
   call_tracing::{
-    export_call_trace_data, export_tracing_selection, import_call_trace_data,
-    import_tracing_selection, obtain_function_id_selection, print_call_tracing_summary,
+    export_call_trace_data, export_tracing_selection, obtain_function_id_selection,
+    print_call_tracing_summary,
   },
   testing::test_server_job,
 };
@@ -33,15 +31,10 @@ use stages::{
 use crate::{
   log::LogStrategy,
   modmap::NumFunUid,
-  shmem_capture::{TracingInfra, send_call_tracing_metadata},
+  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase},
   stages::{
-    common::{
-      CommonStageParams, cmd_from_args, drive_instrumented_application, read_thread_counts,
-    },
-    testing::{
-      BasicTesting, CheckpointedTesting, LogResult, MTSupportTesting, PartialRegistryItem,
-      TestJobFailure, TestOutputPathGen, TestStatus, TestingPhase,
-    },
+    common::{CommonStageParams, read_thread_counts},
+    testing::{LogResult, PartialRegistryItem, TestJobFailure, TestStatus, TestingPhase},
   },
 };
 
@@ -81,7 +74,7 @@ async fn main() -> Result<()> {
 
   let mut common_params =
     CommonStageParams::try_initialize(cli.buff_count, cli.buff_size, &cli.modmap)?;
-  let mut modules = common_params.extract_module_maps()?;
+  let modules = common_params.extract_module_maps()?;
   let common_params = Arc::new(common_params);
   match cli.stage {
     args::Stage::TraceCalls {
@@ -93,59 +86,28 @@ async fn main() -> Result<()> {
       if import_path.is_some() {
         out_file = None;
       }
+      let mut fn_freqs = calltrace_phase(
+        import_path,
+        command,
+        &modules,
+        common_params,
+        &cli.fd_prefix,
+      )
+      .await?;
 
-      let mut pairs = if let Some(in_path) = import_path {
-        lg.trace("Importing");
-        let result = import_call_trace_data(in_path, &modules)?;
-        lg.progress("Import done");
-        result
-      } else {
-        let command = command.ok_or(anyhow!(
-          "command must be present if import_path is not specified"
-        ))?;
-
-        lg.progress("Initializing tracing infrastructure");
-        let infra_params = common_params.infra;
-        let (mut tracing_infra, finalizer_info) =
-          TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-        let metadata_svr = create_meta_svr(&common_params)?;
-
-        let result = drive_instrumented_application(
-          cmd_from_args(&command)?,
-          finalizer_info,
-          metadata_svr.clone(),
-          send_call_tracing_metadata,
-          || perform_call_tracing(&mut tracing_infra, &modules),
-          infra_params,
-        )
-        .await
-        .map(|freqs| freqs.into_iter().collect::<Vec<(_, _)>>());
-
-        lg.progress("Shutting down tracing infrastructure...");
-        // we simply chain Results together to perform cleanup, in edge cases, even despite this effort, --cleanup is still requried
-        let real_result = tracing_infra
-          .deinit()
-          .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
-          .map(|_| result)?;
-
-        // this should not really fail unless metadata_svr is cloned and persisted somewhere it should not be (i.e we should be the sole owners of metadata_svr here)
-        try_meta_svr_arc_deinit(metadata_svr)?;
-        real_result?
-      };
-
-      pairs.sort_by(|a, b| b.1.cmp(&a.1));
-      print_call_tracing_summary(&mut pairs, &modules);
+      fn_freqs.sort_by(|a, b| b.1.cmp(&a.1));
+      print_call_tracing_summary(&mut fn_freqs, &modules);
 
       if let Some(out_path) = out_file {
         lg.trace("Exporting");
 
-        let _ = export_call_trace_data(&pairs, out_path)
+        let _ = export_call_trace_data(&fn_freqs, out_path)
           .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
         lg.progress("Export done");
       }
 
-      let traces = pairs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
+      let traces = fn_freqs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
       let selected_fns = loop {
         let sel = obtain_function_id_selection(&traces, &modules);
         if let Ok(selection) = sel {
@@ -162,41 +124,17 @@ async fn main() -> Result<()> {
       mem_limit,
       command,
     } => {
-      lg.progress("Reading function selection");
-      let selection = import_tracing_selection(&selection_file)?;
+      let modules = mask_fn_selection(selection_file, modules)?;
 
-      lg.progress("Masking");
-      modules.mask_include(&selection)?;
-
-      lg.progress("Setting up function packet dumping");
-      let mut dumper = ArgPacketDumper::new(&out_dir, &modules, mem_limit as usize)?;
-      lg.progress("Initializing tracing infrastructure");
-      let infra_params = common_params.infra;
-      let (mut tracing_infra, finalizer_info) =
-        TracingInfra::try_new(&cli.fd_prefix, infra_params)?;
-      let metadata_svr = create_meta_svr(&common_params)?;
-
-      // for comments, see the match arm for the TraceCalls subcommand
-      let result = drive_instrumented_application(
-        cmd_from_args(&command)?,
-        finalizer_info,
-        metadata_svr.clone(),
-        send_arg_capture_metadata,
-        || perform_arg_capture(&mut tracing_infra, &modules, &mut dumper),
-        infra_params,
+      arg_capture_phase(
+        out_dir,
+        &modules,
+        mem_limit as usize,
+        common_params,
+        &cli.fd_prefix,
+        &command,
       )
-      .await;
-      if let Err(e) = &result {
-        lg.crit(format!("error in capture {e}"));
-      }
-
-      lg.progress("Shutting down tracing infrastructure...");
-      let real_result = tracing_infra
-        .deinit()
-        .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
-        .map(|_| result);
-      try_meta_svr_arc_deinit(metadata_svr)?;
-      let _ = real_result?;
+      .await?;
     }
     args::Stage::Test {
       selection_file,
@@ -211,13 +149,8 @@ async fn main() -> Result<()> {
       detailed_report,
       testing_mode,
     } => {
+      let modules = Arc::new(mask_fn_selection(selection_file, modules)?);
       let command = Arc::new(command);
-      lg.progress("Reading function selection");
-      let selection = import_tracing_selection(&selection_file)?;
-      lg.progress("Masking");
-      modules.mask_include(&selection)?;
-
-      let modules = Arc::new(modules);
       lg.progress("Setting up function packet reader");
 
       let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
@@ -233,7 +166,7 @@ async fn main() -> Result<()> {
           &mut packet_reader,
         );
       }
-      // redeclare as immutable since mutability is not needed further
+      // redeclare as immutable
       let packet_reader = packet_reader;
 
       lg.progress("Setting up function packet server");
@@ -253,110 +186,28 @@ async fn main() -> Result<()> {
         Err(_) => bail!("server ready timeout"),
         Ok(Err(e)) => bail!("server ready error: {}", e),
       }
-
       let metadata_svr = create_meta_svr(&common_params)?;
-      let mut errors = vec![];
-      let global_timeout = global_timeout.map(|v| Duration::from_secs(v as u64));
-      let test_case_timeout = Duration::from_secs(timeout as u64);
 
-      for module in modules.modules() {
-        for function in modules.functions(*module).unwrap() {
-          let uid = (*module, *function).into();
-          let test_count = packet_reader.get_packet_count(uid).ok_or(anyhow!(
-            "Not found tests: {} {}",
-            module.hex_string(),
-            function.hex_string()
-          ))?;
+      let result = testing_phase(
+        testing_mode,
+        common_params,
+        global_timeout.map(|v| Duration::from_secs(v as u64)),
+        Duration::from_secs(timeout as u64),
+        &modules,
+        &packet_reader,
+        command,
+        &test_output,
+        thread_counts,
+        results.clone(),
+        metadata_svr.clone(),
+      )
+      .await;
 
-          if test_count == 0 {
-            Log::get("main").warn(format!(
-              "Skipping M: {} F: {} due to zero test count t:{}",
-              module.hex_string(),
-              function.hex_string(),
-              test_count
-            ));
-            continue;
-          }
-
-          match testing_mode {
-            args::TestingMode::Basic => {
-              let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
-              let p = BasicTesting::new(common_params.clone(), output_gen.clone());
-              run_test_case(
-                p,
-                command.clone(),
-                PartialRegistryItem {
-                  uid,
-                  test_count,
-                  test_case_timeout,
-                  global_timeout,
-                  thread_counts: thread_counts.clone(),
-                },
-                metadata_svr.clone(),
-                results.clone(),
-                &mut errors,
-              )
-              .await
-            }
-            args::TestingMode::MTSupport => {
-              let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
-              let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
-              run_test_case(
-                p,
-                command.clone(),
-                PartialRegistryItem {
-                  uid,
-                  test_count,
-                  test_case_timeout,
-                  global_timeout,
-                  thread_counts: thread_counts.clone(),
-                },
-                metadata_svr.clone(),
-                results.clone(),
-                &mut errors,
-              )
-              .await
-            }
-            args::TestingMode::Criu => {
-              // TODO TODO TODO
-              // TODO TODO TODO
-              // TODO TODO TODO
-              // TODO TODO TODO
-              // Require running as root (restoration requires it)
-              // - or allow nonroot but warn regarding the --unpriviliged option usage
-              // (and propagate the info that the option is used)
-              let output_gen = TestOutputPathGen::make(test_output.clone())?;
-              ensure!(output_gen.is_some(), "Output must be specified");
-              let output_gen = Arc::new(output_gen.unwrap());
-              let mut p =
-                CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
-              while let Some(()) = p.next_batch() {
-                let has_tests = p.prepare_cases(
-                  &command,
-                  &PartialRegistryItem {
-                    uid,
-                    test_count,
-                    test_case_timeout,
-                    global_timeout,
-                    thread_counts: thread_counts.clone(),
-                  },
-                )?;
-                if !has_tests {
-                  break;
-                }
-
-                let (oks, fails) = p.run_tests(metadata_svr.clone()).await?;
-                results.lock().unwrap().extend_from_slice(&oks);
-                errors.extend_from_slice(&fails);
-              }
-              Ok(())
-            }
-          }?;
-        }
-      }
       lg.progress("Waiting for server to exit...");
       let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
+      let errors = result?;
+
       lg.progress("reporting results");
       let delayed_err = {
         let rmx: Result<Mutex<Vec<LogResult>>, Arc<Mutex<Vec<LogResult>>>> =

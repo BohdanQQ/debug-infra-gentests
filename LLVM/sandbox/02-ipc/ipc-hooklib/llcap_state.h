@@ -3,6 +3,15 @@
 #define HOOKLIB_LLCAP_STATE
 #include "protobuf/proto/main.pb.h"
 #ifdef __cplusplus
+
+// start_lifetime_as not available, using this trick:
+// https://stackoverflow.com/a/76794371
+template<class T>
+requires (std::is_trivially_copyable<T>::value)
+T* start_lifetime_as(void* from) {
+  return std::launder(static_cast<T*>(std::memmove(from, from, sizeof(T)))); 
+}
+
 extern "C" {
 #endif
 #include <stdbool.h>

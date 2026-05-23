@@ -77,10 +77,8 @@ static bool connect_to_server(const char *path) {
   auto len = static_cast<socklen_t>(
       strnlen(static_cast<char *>(remote.sun_path), SUN_PATH_MAX_LEN) +
       sizeof(remote.sun_family));
-  // reinterpret_cast should be legal here... (otherwise there is only C-style
-  // cast)
-  if (connect(s_server_socket, reinterpret_cast<struct sockaddr *>(&remote),
-              len) == -1) {
+  auto* sockaddr = start_lifetime_as<struct sockaddr>(&remote);
+  if (connect(s_server_socket, sockaddr, len) == -1) {
     perror("Failed to connect\n");
     return false;
   }

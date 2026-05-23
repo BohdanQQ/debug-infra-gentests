@@ -672,7 +672,7 @@ pub async fn singular_restore_job(
 
   // the below is false, FIXME -> use real paths
   // the reason for those is the need to create an independent process
-  // so that CRIU can restore later 
+  // so that CRIU can restore later
   // descriptors are not created - they are created by CRIU
 
   // launch the restore
@@ -1382,7 +1382,7 @@ impl CheckpointedTesting {
       return STOP;
     }
 
-    let mut item = TestRegisryItem {
+    let item = TestRegisryItem {
       uid: partial.uid,
       call_index: CallIndexT(match self.last_checkpoint {
         CheckpointState::Init => {

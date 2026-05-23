@@ -157,13 +157,15 @@ pub struct BorrowedOneshotWritePtr<'a, T> {
 impl<'a, T> BorrowedOneshotWritePtr<'a, T> {
   /// safety: ptr + offset must be a valid, unaliased pointer to T, caller also ensures T is
   /// trivial (as in a memcpy to size of T is a valid representation of T) and size of T is not less than 4 (see the write function for explanation)
-  pub unsafe fn new(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Self {
+  pub unsafe fn at(ptr: std::cell::RefMut<'a, *mut u8>, offset: usize) -> Result<Self> {
     // safety: caller
     let data_ptr = unsafe { ptr.add(offset) };
-    Self {
+    ensure!((data_ptr as *mut T).is_aligned(), "Unaligned offset");
+
+    Ok(Self {
       _borrow_handle: ptr,
       data: data_ptr as *mut T,
-    }
+    })
   }
 
   pub fn write(self, value: T) {
@@ -332,7 +334,7 @@ impl TracingInfra {
     }
     Log::get("writerptr").trace(format!("Ptr {buffer_start:?}"));
     // safety: base_mem RefMut, above checks, T is u32
-    Ok(unsafe { BorrowedOneshotWritePtr::new(base_mem, buff_offset) })
+    Ok(unsafe { BorrowedOneshotWritePtr::at(base_mem, buff_offset)? })
   }
 
   /// returns Ok variant if base pointer + buff_offset are valid offset to a logical buffer
@@ -553,7 +555,7 @@ pub fn send_test_metadata(
 
   let checkpoint_path = checkpoint_path.unwrap_or("");
   ensure!(
-    checkpoint_path.as_bytes().len() <= MAX_CHARS,
+    checkpoint_path.len() <= MAX_CHARS,
     "Path to CRIU dumps too long!"
   );
 

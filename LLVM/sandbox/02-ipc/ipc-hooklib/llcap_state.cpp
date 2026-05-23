@@ -107,7 +107,7 @@ static bool receive_retarget_data(const void* source, uint32_t size, void* targe
   ShmMeta shm{};
   memcpy(&shm, source, size);
 
-  SRetargetInfo* rtg = reinterpret_cast<SRetargetInfo*>(target);
+  auto* rtg = start_lifetime_as<SRetargetInfo>(target);
   rtg->new_target_call = shm.target_call_number;
   rtg->target_lid = shm.target_thread_lid;
   rtg->new_mode = shm.mode;
