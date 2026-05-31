@@ -420,6 +420,7 @@ impl ExtModuleMap {
         lg.warn(format!("Function {f} not found in module {:02X}", mod_id.0));
       }
     }
+    let unknown = "unknown".to_owned();
 
     // perform filtering for each module in targets
     for modid in self
@@ -427,18 +428,24 @@ impl ExtModuleMap {
       .keys()
       .filter(|m| allowlist_fn.contains_key(*m))
     {
-      let functions = self.function_ids.get_mut(modid).unwrap();
+      let allowed = allowlist_fn
+        .get(modid)
+        .ok_or(anyhow!("Unknown module ID {:?}", modid))?;
+      let functions = self
+        .function_ids
+        .get_mut(modid)
+        .ok_or(anyhow!("Functions not found for {:?}", modid))?;
       lg.info(format!("Module {}:", modid.hex_string()));
-      functions.mask_include(allowlist_fn.get(modid).unwrap())?;
+      functions.mask_include(allowed)?;
       lg.info(format!(
         "Functions {:?} remain in module {}",
-        allowlist_fn
-          .get(modid)
-          .unwrap()
+        allowed
           .iter()
           .map(|x| (
             x.hex_string(),
-            self.get_function_name((*modid, *x).into()).unwrap()
+            self
+              .get_function_name((*modid, *x).into())
+              .unwrap_or(&unknown)
           ))
           .collect::<Vec<_>>(),
         modid.hex_string()
@@ -604,12 +611,15 @@ mod tests {
     let data = underlying.as_bytes();
     let split = data.split(|x| *x == b'\0').collect::<Vec<&[u8]>>();
     let parsed = parse_fn_id_tuple(&split);
-    if parsed.is_err() {
-      println!("{}", parsed.unwrap_err());
-      assert!(false);
-      unreachable!()
-    }
-    let (pfid, pname, pargs) = parsed.unwrap();
+    let parsed = match parsed {
+      Err(e) => {
+        println!("{}", e);
+        assert!(false);
+        unreachable!()
+      }
+      Ok(v) => v,
+    };
+    let (pfid, pname, pargs) = parsed;
     assert!(*pfid == fn_id);
     assert!(pname == fn_name);
     assert!(pargs.len() == arg_list.len());

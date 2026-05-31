@@ -121,13 +121,11 @@ impl ArgPacketDumper {
     let capacity = (mem_limit / module_maps.modules().count().max(1)).max(4096 * 2);
 
     for module in module_maps.modules() {
-      let functions = module_maps.functions(*module);
-      ensure!(
-        functions.is_some(),
-        "Module {} did not map to any function set!",
-        **module
-      );
-      let mut functions = functions.unwrap();
+      let mut functions = if let Some(fns) = module_maps.functions(*module) {
+        fns
+      } else {
+        bail!("Module {} did not map to any function set!", **module);
+      };
 
       result_map.insert(
         *module,
@@ -204,13 +202,11 @@ impl PacketReader {
     let capacity = (buff_limit / module_maps.modules().count()).max(4096 * 2);
     let mut captures: HashMap<NumFunUid, Arc<Mutex<dyn PacketIterator + Send>>> = HashMap::new();
     for module in module_maps.modules() {
-      let functions = module_maps.functions(*module);
-      ensure!(
-        functions.is_some(),
-        "Module {} did not map to any function set!",
-        **module
-      );
-      let functions = functions.unwrap();
+      let functions = if let Some(fns) = module_maps.functions(*module) {
+        fns
+      } else {
+        bail!("Module {} did not map to any function set!", **module);
+      };
 
       for function in functions {
         let path = dir.join(module.hex_string()).join(function.hex_string());
@@ -261,43 +257,57 @@ impl PacketReader {
   }
 
   /// a helper that performs a locking extraction of the desired packet iterator
-  fn get_locked_capture_iterator(
+  fn get_locked_capture_iterator_mut(
     &mut self,
     id: NumFunUid,
   ) -> Result<MutexGuard<'_, dyn PacketIterator + Send + 'static>> {
-    if let Some(v) = self.captures.get_mut(&id) {
-      Ok(v.lock().unwrap())
-    } else {
-      bail!("Not found in packet reader m/f {id:?}")
-    }
+    self.get_locked_capture_iterator(id)
+  }
+
+  // the above, just not mut
+  fn get_locked_capture_iterator(
+    &self,
+    id: NumFunUid,
+  ) -> Result<MutexGuard<'_, dyn PacketIterator + Send + 'static>> {
+    self
+      .captures
+      .get(&id)
+      .ok_or(anyhow!("Not found in packet reader m/f {id:?}"))
+      .and_then(|v| v.try_lock().map_err(|e| anyhow!("{}", e)))
   }
 
   pub fn read_next_packet(&mut self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
     let mut it = self
-      .get_locked_capture_iterator(id)
+      .get_locked_capture_iterator_mut(id)
       .map_err(|e| anyhow!("read_next_packet failed: {e}"))?;
     it.read_next_packet()
   }
 
   pub fn try_reset(&mut self, id: NumFunUid) -> Result<()> {
     let mut it = self
-      .get_locked_capture_iterator(id)
+      .get_locked_capture_iterator_mut(id)
       .map_err(|e| anyhow!("try_reset failed: {e}"))?;
     it.try_reset()
   }
 
   pub fn get_packet_count(&self, id: NumFunUid) -> Option<u32> {
-    self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().packet_count())
+    match self.get_locked_capture_iterator(id) {
+      Ok(v) => Some(v.packet_count()),
+      Err(e) => {
+        Log::get("get_packet_count").crit(e.to_string());
+        None
+      }
+    }
   }
 
   pub fn get_upcoming_pkt_idx(&self, id: NumFunUid) -> Option<usize> {
-    self
-      .captures
-      .get(&id)
-      .map(|v| v.lock().unwrap().upcoming_packet_idx())
+    match self.get_locked_capture_iterator(id) {
+      Ok(v) => Some(v.upcoming_packet_idx()),
+      Err(e) => {
+        Log::get("get_upcoming_pkt_idx").crit(e.to_string());
+        None
+      }
+    }
   }
 
   pub fn try_read_packet(&mut self, id: NumFunUid, idx: usize) -> Option<Vec<u8>> {
@@ -320,7 +330,7 @@ trait PacketIterator {
   fn read_next_packet(&mut self) -> Result<Option<Vec<u8>>>;
   fn packet_count(&self) -> u32;
   fn try_reset(&mut self) -> Result<()>;
-  fn upcoming_packet_idx(&mut self) -> usize;
+  fn upcoming_packet_idx(&self) -> usize;
 }
 
 /// see [`FunctionPacketDumper::dump`]
@@ -365,7 +375,7 @@ impl PacketIterator for CaptureReader {
     Ok(())
   }
 
-  fn upcoming_packet_idx(&mut self) -> usize {
+  fn upcoming_packet_idx(&self) -> usize {
     self.idx
   }
 }
@@ -385,7 +395,7 @@ impl PacketIterator for EmptyPacketIter {
     Ok(())
   }
 
-  fn upcoming_packet_idx(&mut self) -> usize {
+  fn upcoming_packet_idx(&self) -> usize {
     0
   }
 }

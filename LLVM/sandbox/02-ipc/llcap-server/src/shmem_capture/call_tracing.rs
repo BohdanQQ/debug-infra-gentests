@@ -7,7 +7,7 @@ use crate::{
   stages::call_tracing::Message,
 };
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 
 use super::TracingInfra;
 
@@ -96,13 +96,9 @@ impl CaptureLoop for CallTracing {
     let lg = Log::get("update_from_buffer");
     let buff = &mut buffer.buffer;
     if buff.empty() {
-      ensure!(
-        state.mod_id_wip.is_none(),
-        format!(
-          "Comms corruption - partial state with empty message following it! Module id {}",
-          *state.mod_id_wip.unwrap()
-        )
-      );
+      if let Some(v) = state.mod_id_wip {
+        bail!("Comms corruption - partial state with empty message following it! Module id {v:?}")
+      }
       lg.trace("End msg");
       state.end_message_counter += 1;
       return Ok(state);

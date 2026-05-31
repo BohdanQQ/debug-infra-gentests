@@ -242,15 +242,14 @@ impl TracingInfra {
     let free_sem = Semaphore::try_open_exclusive(free_name, n_buffs)?;
     let full_sem = Semaphore::try_open_exclusive(full_name, 0);
 
-    if let Err(e) = full_sem {
-      match deinit_semaphore_single(free_sem) {
+    match full_sem {
+      Err(e) => match deinit_semaphore_single(free_sem) {
         Ok(()) => Err(anyhow!(e)),
         Err(e2) => Err(anyhow!(
           "Failed cleanup after FULL semaphore init failure: {e2}, init failure: {e}"
         )),
-      }
-    } else {
-      Ok((free_sem, full_sem.unwrap()))
+      },
+      Ok(v) => Ok((free_sem, v)),
     }
   }
 
@@ -395,19 +394,32 @@ impl TracingInfra {
 fn cleanup_sems(prefix: &str) {
   let lg = Log::get("cleanup_sems");
   let FreeFullSemNames { free, full } = FreeFullSemNames::new(prefix, "capture", "base");
-  for name in &[
-    free,
-    full,
-    String::from_utf8(META_SEM_DATA.split_last().unwrap().1.to_vec()).unwrap(),
-    String::from_utf8(META_SEM_ACK.split_last().unwrap().1.to_vec()).unwrap(),
-  ] {
+  let value_or_err = |v: &[u8]| -> Option<String> {
+    match v
+      .split_last()
+      .ok_or("Wrong format of data sem name".to_owned())
+      .and_then(|v| String::from_utf8(v.1.to_vec()).map_err(|e| format!("Invalid string {e}")))
+    {
+      Ok(x) => Some(x),
+      Err(e) => {
+        lg.crit(e);
+        None
+      }
+    }
+  };
+  let (nonull_data, nonull_ack) = match (value_or_err(META_SEM_DATA), value_or_err(META_SEM_ACK)) {
+    (Some(a), Some(b)) => (a, b),
+    _ => return,
+  };
+  for name in &[free, full, nonull_data, nonull_ack] {
     lg.info(format!("Cleanup {name}"));
-    let res = Semaphore::try_open(name, 0, O_CREAT.into(), None);
-    if let Ok(sem) = res {
-      let _ = deinit_semaphore_single(sem)
-        .inspect_err(|e| lg.info(format!("Cleanup of opened {name}: {e}")));
-    } else {
-      lg.info(format!("Cleanup {name}: {}", res.err().unwrap()));
+    let res = Semaphore::try_open(name, 0, O_CREAT.into(), None)
+      .map_err(|e| format!("Cleanup {name}: {e}"))
+      .and_then(|sem| {
+        deinit_semaphore_single(sem).map_err(|e| format!("Cleanup of opened {name}: {e}"))
+      });
+    if let Err(e) = res {
+      lg.crit(e);
     }
   }
 }

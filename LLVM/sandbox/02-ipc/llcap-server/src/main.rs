@@ -31,7 +31,7 @@ use stages::{
 use crate::{
   log::LogStrategy,
   modmap::NumFunUid,
-  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase},
+  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase, try_lock_anhw},
   stages::{
     common::{CommonStageParams, read_thread_counts},
     testing::{LogResult, PartialRegistryItem, TestJobFailure, TestStatus, TestingPhase},
@@ -72,9 +72,8 @@ async fn main() -> Result<()> {
     return cleanup(&cli.fd_prefix);
   }
 
-  let mut common_params =
+  let (common_params, modules) =
     CommonStageParams::try_initialize(cli.buff_count, cli.buff_size, &cli.modmap)?;
-  let modules = common_params.extract_module_maps()?;
   let common_params = Arc::new(common_params);
   match cli.stage {
     args::Stage::TraceCalls {
@@ -110,10 +109,9 @@ async fn main() -> Result<()> {
       let traces = fn_freqs.iter().map(|x| x.0).collect::<Vec<NumFunUid>>();
       let selected_fns = loop {
         let sel = obtain_function_id_selection(&traces, &modules);
-        if let Ok(selection) = sel {
-          break selection;
-        } else {
-          lg.crit(sel.unwrap_err().to_string());
+        match sel {
+          Ok(selection) => break selection,
+          Err(e) => lg.crit(e.to_string()),
         }
       };
       export_tracing_selection(&selected_fns, &modules, selection_path)?;
@@ -191,8 +189,8 @@ async fn main() -> Result<()> {
       let result = testing_phase(
         testing_mode,
         common_params,
-        global_timeout.map(|v| Duration::from_secs(v as u64)),
-        Duration::from_secs(timeout as u64),
+        global_timeout.map(|v| Duration::from_secs(v.into())),
+        Duration::from_secs(timeout.into()),
         &modules,
         &packet_reader,
         command,
@@ -204,7 +202,7 @@ async fn main() -> Result<()> {
       .await;
 
       lg.progress("Waiting for server to exit...");
-      let defer_res_end_svr = end_tx.send(()).map_err(|_| anyhow!("failed to end server"));
+      let defer_res_end_svr = end_tx.send(()).map_err(|()| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
       let errors = result?;
 
@@ -276,10 +274,11 @@ fn merge_results(results: Vec<LogResult>) -> Vec<LogResult> {
   loop {
     // remove all "marked as trash"
     results.retain(|v| v.1);
-    if results.is_empty() {
+    let res = if let Some(s) = results.first().cloned() {
+      s.0
+    } else {
       return merged;
-    }
-    let res = results.first().cloned().unwrap().0;
+    };
     let mut same_refs = results
       .iter_mut()
       .filter(|(v, _)| {
@@ -289,8 +288,9 @@ fn merge_results(results: Vec<LogResult>) -> Vec<LogResult> {
 
     same_refs.sort_by(|v1, v2| status_prio(&v1.0.status).cmp(&status_prio(&v2.0.status)));
     same_refs.iter_mut().for_each(|x| x.1 = false);
-
-    merged.push(same_refs.last().unwrap().0.clone());
+    if let Some(last) = same_refs.last() {
+      merged.push(last.0.clone());
+    }
   }
 }
 
@@ -327,9 +327,9 @@ async fn run_test_case(
     if !v {
       break;
     }
-    let (mut res, mut err) = test_phase.run_tests(metadata_svr.clone()).await?;
+    let (mut res, mut err) = test_phase.run_tests(Arc::clone(&metadata_svr)).await?;
 
-    results.lock().unwrap().append(&mut res);
+    try_lock_anhw(&results)?.append(&mut res);
     errors.append(&mut err);
 
     if test_phase.next_batch().is_none() {

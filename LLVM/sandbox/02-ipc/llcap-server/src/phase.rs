@@ -5,7 +5,7 @@ use std::{
   time::Duration,
 };
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow, bail};
 
 use crate::{
   args,
@@ -18,9 +18,7 @@ use crate::{
   stages::{
     arg_capture::{ArgPacketDumper, PacketReader},
     call_tracing::{import_call_trace_data, import_tracing_selection},
-    common::{
-      CommonStageParams, cmd_from_args, drive_instrumented_application,
-    },
+    common::{CommonStageParams, cmd_from_args, drive_instrumented_application},
     testing::{
       BasicTesting, CheckpointedTesting, LogResult, MTSupportTesting, PartialRegistryItem,
       TestJobFailure, TestOutputPathGen, TestingPhase,
@@ -46,7 +44,11 @@ fn create_meta_svr(params: &CommonStageParams) -> Result<Arc<Mutex<MetadataPubli
 fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Result<()> {
   Arc::try_unwrap(metadata_svr).map_or(
     Err(anyhow!("Failed to unwrap from arc... this is not expected")),
-    |ms| ms.into_inner().unwrap().deinit(),
+    |ms| {
+      ms.into_inner()
+        .map_err(|v| anyhow!("Failed to obtain mtx: {v}"))
+        .and_then(|v| v.deinit())
+    },
   )
 }
 
@@ -138,6 +140,12 @@ pub async fn arg_capture_phase(
   res
 }
 
+pub fn try_lock_anhw<'a, T>(results: &'a Arc<Mutex<T>>) -> Result<std::sync::MutexGuard<'a, T>> {
+  results
+    .try_lock()
+    .map_err(|e| anyhow!("Failed to lock {e}"))
+}
+
 pub async fn testing_phase(
   mode: args::TestingMode,
   common_params: Arc<CommonStageParams>,
@@ -154,7 +162,12 @@ pub async fn testing_phase(
   let mut errors = vec![];
 
   for module in modules.modules() {
-    for function in modules.functions(*module).unwrap() {
+    let fns_in_mod = if let Some(v) = modules.functions(*module) {
+      v
+    } else {
+      bail!("Unexpected mapping");
+    };
+    for function in fns_in_mod {
       let uid = (*module, *function).into();
       let test_count = packet_reader.get_packet_count(uid).ok_or(anyhow!(
         "Not found tests: {} {}",
@@ -219,9 +232,13 @@ pub async fn testing_phase(
           // Require running as root (restoration requires it)
           // - or allow nonroot but warn regarding the --unpriviliged option usage
           // (and propagate the info that the option is used)
-          let output_gen = TestOutputPathGen::make(test_output.clone())?;
-          ensure!(output_gen.is_some(), "Output must be specified");
-          let output_gen = Arc::new(output_gen.unwrap());
+          let output_gen = if let Some(v) = TestOutputPathGen::make(test_output.clone())? {
+            v
+          } else {
+            bail!("Output must be specified");
+          };
+          let output_gen = Arc::new(output_gen);
+
           let mut p =
             CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
           // TODO: use run_test_case (either adapt it for next_batch or get rid of nxt_btch)
@@ -241,7 +258,7 @@ pub async fn testing_phase(
             }
 
             let (oks, fails) = p.run_tests(metadata_svr.clone()).await?;
-            results.lock().unwrap().extend_from_slice(&oks);
+            try_lock_anhw(&results)?.extend_from_slice(&oks);
             errors.extend_from_slice(&fails);
           }
           Ok(())
@@ -277,7 +294,7 @@ async fn run_test_case(
     }
     let (mut res, mut err) = test_phase.run_tests(metadata_svr.clone()).await?;
 
-    results.lock().unwrap().append(&mut res);
+    try_lock_anhw(&results)?.append(&mut res);
     errors.append(&mut err);
 
     if test_phase.next_batch().is_none() {

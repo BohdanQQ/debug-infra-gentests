@@ -23,7 +23,7 @@ use tokio::{process::Command, time::timeout};
 ///
 /// the monitor performs the IPC finalizing sequence when a program crashes (is terminated by a signal)
 ///
-async fn spawn_process_monitor(
+fn spawn_process_monitor(
   mut child: tokio::process::Child,
   fin_info: FinalizerInfraInfo,
 ) -> (
@@ -111,7 +111,7 @@ where
     .map_err(|e| anyhow!("Failed to spawn from command {e}"))?;
 
   let (monitor_ready_rx, child_monitor) =
-    spawn_process_monitor(spawned_child, finalizer_info).await;
+    spawn_process_monitor(spawned_child, finalizer_info);
   lg.trace("Waiting for monitor start");
   match timeout(Duration::from_secs(10), monitor_ready_rx).await {
     Ok(Ok(val)) => ensure!(val, "Monitor NOT ready"),
@@ -163,7 +163,6 @@ pub struct InfraParams {
 }
 
 pub struct CommonStageParams {
-  modules: Option<ExtModuleMap>,
   pub infra: InfraParams,
   pub data_semaphore_name: String,
   pub ack_semaphore_name: String,
@@ -172,7 +171,11 @@ pub struct CommonStageParams {
 }
 
 impl CommonStageParams {
-  pub fn try_initialize(buff_count: u32, buff_size: u32, modules_path: &PathBuf) -> Result<Self> {
+  pub fn try_initialize(
+    buff_count: u32,
+    buff_size: u32,
+    modules_path: &PathBuf,
+  ) -> Result<(Self, ExtModuleMap)> {
     let modules = obtain_module_map(modules_path)?;
     let sem_str = null_terminated_to_string(META_SEM_DATA)?;
     let ack_str = null_terminated_to_string(META_SEM_ACK)?;
@@ -188,17 +191,19 @@ impl CommonStageParams {
       "Buffer size must be larger (at least {})",
       MIN_BUFF_SIZE
     );
-    Ok(CommonStageParams {
-      modules: Some(modules),
-      infra: InfraParams {
-        buff_count,
-        buff_len: buff_size,
+    Ok((
+      CommonStageParams {
+        infra: InfraParams {
+          buff_count,
+          buff_len: buff_size,
+        },
+        data_semaphore_name: sem_str,
+        ack_semaphore_name: ack_str,
+        meta_mem_name_null_term: META_MEM_NAME.to_vec(),
+        meta_mem_size_name_null_term: META_MEM_SIZE_NAME.to_vec(),
       },
-      data_semaphore_name: sem_str,
-      ack_semaphore_name: ack_str,
-      meta_mem_name_null_term: META_MEM_NAME.to_vec(),
-      meta_mem_size_name_null_term: META_MEM_SIZE_NAME.to_vec(),
-    })
+      modules,
+    ))
   }
 
   pub fn shmem_path_cstr(&self) -> Result<(&CStr, &CStr)> {
@@ -207,12 +212,6 @@ impl CommonStageParams {
       std::ffi::CStr::from_bytes_with_nul(&self.meta_mem_size_name_null_term)
         .map_err(|e| anyhow!(e))?,
     ))
-  }
-
-  pub fn extract_module_maps(&mut self) -> Result<ExtModuleMap> {
-    let mut mods = None;
-    std::mem::swap(&mut self.modules, &mut mods);
-    mods.ok_or(anyhow!("Module maps already extracted"))
   }
 }
 

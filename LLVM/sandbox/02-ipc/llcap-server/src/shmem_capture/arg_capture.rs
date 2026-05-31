@@ -8,7 +8,7 @@ use crate::{
   stages::arg_capture::ArgPacketDumper,
   stages::common::dump_thread_counts,
 };
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 
 use super::TracingInfra;
 
@@ -125,8 +125,11 @@ impl PartialCaptureState {
   ) -> Result<Self> {
     let lg = Log::get("progress_read_args");
     let size_refs = mods.get_function_arg_size_descriptors(id);
-    ensure!(size_refs.is_some(), "Unknown function {id:?}");
-    let size_refs = size_refs.unwrap();
+    let size_refs = if let Some(s) = size_refs {
+      s
+    } else {
+      bail!("Unknown function {id:?}");
+    };
     // for each argument description, parse the argument from the buffer
     for (i, desc) in size_refs.iter().enumerate().skip(arg_idx) {
       lg.trace(format!("Argument idx: {i}, desc: {desc:?}"));
@@ -141,13 +144,11 @@ impl PartialCaptureState {
       }
 
       // obtain an argument reader that will read the packet
-      let reader = readers.get_reader();
-      ensure!(
-        reader.is_some(),
-        "Unexpected size type that is missing a reader {:?}",
-        desc
-      );
-      let reader = reader.unwrap();
+      let reader = if let Some(r) = readers.get_reader() {
+        r
+      } else {
+        bail!("Unexpected size type that is missing a reader {desc:?}");
+      };
 
       let slice = raw_buff.as_slice();
       match reader.read(slice)? {
