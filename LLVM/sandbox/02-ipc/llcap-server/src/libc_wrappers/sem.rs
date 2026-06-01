@@ -17,9 +17,9 @@ fn mk_future_time(secs: u16) -> libc::timespec {
     tv_nsec: 0,
   };
   unsafe {
-    clock_gettime(CLOCK_REALTIME, &mut tspec);
+    clock_gettime(CLOCK_REALTIME, &raw mut tspec);
   }
-  tspec.tv_sec += secs as i64;
+  tspec.tv_sec += i64::from(secs);
   tspec
 }
 
@@ -75,7 +75,7 @@ impl Semaphore {
       {
         if let Some(s) = timeout_s {
           let tm = mk_future_time(s);
-          let res = unsafe { libc::sem_timedwait(*sem, &tm) };
+          let res = unsafe { libc::sem_timedwait(*sem, &raw const tm) };
           let err = Error::last_os_error();
           ensure!(
             res != -1 || err.raw_os_error() == Some(ETIMEDOUT),
@@ -97,20 +97,20 @@ impl Semaphore {
   }
 
   /// Consumes self. The error variant contains the un-closed `self` along with an error message
-  pub fn try_close(self) -> Result<Semaphore, (Semaphore, String)> {
+  pub fn try_close(self) -> Result<Self, (Self, String)> {
     match self {
       Semaphore::Open {
         sem,
         cname,
-        marker: _pd,
+        marker: pd,
       } => {
         // SAFETY: Self invariant
         if unsafe { libc::sem_close(sem) } != 0 {
           Err((
-            Semaphore::Open {
+            Self::Open {
               sem,
               cname: cname.clone(),
-              marker: _pd,
+              marker: pd,
             },
             format!(
               "Failed to close semaphore {}: {}",
@@ -122,8 +122,8 @@ impl Semaphore {
           Ok(Self::Closed { cname })
         }
       }
-      Semaphore::Closed { cname } => Err((
-        Semaphore::Closed {
+      Self::Closed { cname } => Err((
+        Self::Closed {
           cname: cname.clone(),
         },
         format!("Close on closed semaphore {cname}"),
@@ -133,12 +133,12 @@ impl Semaphore {
 
   pub fn cname(&self) -> &String {
     match self {
-      Semaphore::Open {
+      Self::Open {
         sem: _,
         cname,
         marker: _pd,
       } => cname,
-      Semaphore::Closed { cname } => cname,
+      Self::Closed { cname } => cname,
     }
   }
 

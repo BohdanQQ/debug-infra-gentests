@@ -54,11 +54,11 @@ fn get_line_input() -> Result<String> {
 type SelectionResult = Result<Vec<TextFunUid>>;
 
 /// returns the list of textual identifiers of functions `fn_uids` whose function name contains the `substring`
-fn try_name_selection(
+fn get_name_selection(
   substring: &str,
   fn_uids: &[NumFunUid],
   mapping: &ExtModuleMap,
-) -> SelectionResult {
+) -> Vec<TextFunUid> {
   let lg = Log::get("try_name_selection");
   if substring.is_empty() {
     lg.warn("Empty substring selection selects all functions");
@@ -77,7 +77,7 @@ fn try_name_selection(
     }
   }
 
-  Ok(result)
+  result
 }
 
 // parses the input as list of ' '-separated indicies into `fn_uids`
@@ -90,7 +90,7 @@ fn try_index_selection(
   let lg = Log::get("try_index_selection");
   let mut result = vec![];
 
-  for inp in input.trim().split(' ').map(|v| v.trim()) {
+  for inp in input.trim().split(' ').map(str::trim) {
     let i = inp.parse::<usize>()?;
 
     if i < fn_uids.len() {
@@ -127,7 +127,7 @@ pub fn obtain_function_id_selection(
   let user_input = get_line_input().expect("Error collecting input");
 
   if let Some((_, after)) = user_input.split_once(NAME_SEARCH_START) {
-    try_name_selection(after.trim(), ordered_traces, mapping)
+    Ok(get_name_selection(after.trim(), ordered_traces, mapping))
   } else {
     try_index_selection(user_input.trim(), ordered_traces, mapping)
   }
@@ -203,7 +203,7 @@ pub fn export_tracing_selection(
       to_write.len()
     );
   }
-  lg.info(format!("Successfully exported to {path:?}"));
+  lg.info(format!("Successfully exported to {}", path.display()));
   Ok(())
 }
 
@@ -242,11 +242,11 @@ pub type CallTraceImportExport = Vec<(NumFunUid, u64)>;
 /// exports traced information for later reuse (e.g. for importing later to generate a new function selection without the need to call-trace the target program)
 pub fn export_call_trace_data(
   sorted_data: &CallTraceImportExport,
-  out_path: PathBuf,
+  out_path: &PathBuf,
 ) -> Result<()> {
   let lg = Log::get("call_tracing::export_data");
 
-  let mut f = File::create(&out_path)?;
+  let mut f = File::create(out_path)?;
   for (fninfo, freq) in sorted_data {
     let module_hash = fninfo.module_id;
 
@@ -257,18 +257,21 @@ pub fn export_call_trace_data(
     .map_err(|e| anyhow!("export_data failed: {e}"))?;
   }
 
-  lg.info(format!("Exported call tracing data to {out_path:?}"));
+  lg.info(format!(
+    "Exported call tracing data to {}",
+    out_path.display()
+  ));
   Ok(())
 }
 
 /// imports call tracing results as exported by [`export_data`]
 pub fn import_call_trace_data(
-  in_path: PathBuf,
+  in_path: &PathBuf,
   modmap: &ExtModuleMap,
 ) -> Result<CallTraceImportExport> {
   let mut result = vec![];
 
-  let f = File::open(&in_path)?;
+  let f = File::open(in_path)?;
   let mut reader = io::BufReader::new(f);
   let mut line = String::new();
 

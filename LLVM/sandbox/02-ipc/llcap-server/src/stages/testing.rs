@@ -2,11 +2,9 @@ use std::{
   fmt::Debug,
   fs::{self, File},
   mem,
-  ops::DerefMut,
   os::unix::process::ExitStatusExt,
   path::{Path, PathBuf},
   process::{ExitStatus, Stdio},
-  rc::Rc,
   sync::{Arc, Mutex, atomic::AtomicBool},
   time::Duration,
 };
@@ -25,11 +23,18 @@ use crate::{
   log::{IntoLogString, Log, LogStrategy},
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   phase::try_lock_anhw,
-  shmem_capture::{MetadataPublisher, hooklib_commons::*, send_test_metadata},
+  shmem_capture::{
+    MetadataPublisher,
+    hooklib_commons::{
+      CLI_MSG_SIZE, TAG_EXC, TAG_EXIT, TAG_FATAL, TAG_PASS, TAG_PKT, TAG_SGNL, TAG_START,
+      TAG_TEST_END, TAG_TEST_FINISH, TAG_TIMEOUT, TEST_SERVER_SOCKET_NAME,
+    },
+    send_test_metadata,
+  },
   stages::{
     self,
     arg_capture::PacketReader,
-    common::*,
+    common::{CommonStageParams, InfraParams, cmd_from_args, null_terminated_to_string},
     test_registry::{TestID, TestRegisryItem, TestRegistry},
   },
 };
@@ -46,7 +51,7 @@ pub struct LogResult {
 }
 
 impl LogResult {
-  pub fn from_test(t: &TestRegisryItem, status: TestStatus) -> Self {
+  pub const fn from_test(t: &TestRegisryItem, status: TestStatus) -> Self {
     Self {
       call: CallIndexT(t.call_index.0 + 1),
       uid: t.uid,
@@ -95,7 +100,7 @@ impl IntoLogString for LogResult {
               .unwrap_or(vec![])
               .iter()
               .map(|v| format!("{v:02X}"))
-              .fold("".to_owned(), |acc, v| acc + &v);
+              .fold(String::new(), |acc, v| acc + &v);
             (modid, fnid, Some(hex))
           }
         };
@@ -106,11 +111,10 @@ impl IntoLogString for LogResult {
           thread_lid.0,
           call.0,
           pkt.0,
-          if let Some(hex) = packet_hex {
-            format!(",\n\t\t\"packet_hex\":\"{hex}\",")
-          } else {
-            ",".to_owned()
-          },
+          packet_hex.map_or_else(
+            || ",".to_owned(),
+            |hex| format!(",\n\t\t\"packet_hex\":\"{hex}\",")
+          ),
         )
       }
     }
@@ -129,8 +133,8 @@ pub fn test_server_socket() -> String {
 /// implements the central "dispatch" server
 /// to which all test instances (test coordinators) connect
 ///
-/// this future signals readiness (listening for connections) via ready_tx
-/// and periodically checks end_rx which orders this future (and the server) to terminate
+/// this future signals readiness (listening for connections) via `ready_tx`
+/// and periodically checks `end_rx` which orders this future (and the server) to terminate
 pub async fn test_server_job(
   packet_dir: PathBuf,
   modules: Arc<ExtModuleMap>,
@@ -142,7 +146,9 @@ pub async fn test_server_job(
   let path = test_server_socket();
   lg.info(format!("Starting at {path}"));
   let listener = UnixListener::bind(path.clone())?;
-  ready_tx.send(()).map_err(|_| anyhow!("Receiver dropped"))?;
+  ready_tx
+    .send(())
+    .map_err(|()| anyhow!("Receiver dropped"))?;
   lg.info("Listening");
 
   let mut handles = vec![];
@@ -168,7 +174,7 @@ pub async fn test_server_job(
         handles.push(tokio::spawn(test_coordinator_case_handler(
           pid,
           client_stream,
-          packet_dir.to_path_buf(),
+          packet_dir.clone(),
           modules.clone(),
           mem_limit,
           results,
@@ -176,7 +182,7 @@ pub async fn test_server_job(
         )));
       }
       Ok(Err(e)) => Err(anyhow!(e))?,
-      Err(_) => continue, // timeout
+      Err(_) => (), // timeout
     }
   }
 
@@ -388,7 +394,7 @@ async fn test_coordinator_case_handler(
     |state: &ClientState| Log::get(&format!("test_coordinator_case_handler({pid})@{state:?}"));
   let mut lg = get_logger(&state);
   let mut packets = PacketReader::new(&packet_dir, &modules, mem_limit)?;
-  let (read, mut write) = stream.into_split();
+  let (read, write) = stream.into_split();
   let mut buff_stream = BufReader::new(read);
 
   loop {
@@ -425,7 +431,7 @@ async fn test_coordinator_case_handler(
     lg.trace(format!("Read done: {data:02X?}"));
     let msg = TestMessage::try_from(&data).map_err(|e| anyhow!(e))?;
 
-    let (new_state, response) = handle_client_msg(state, msg, &mut packets, results.clone())?;
+    let (new_state, response) = handle_client_msg(state, msg, &mut packets, &results)?;
     state = new_state;
     lg = get_logger(&state); // rename logger for a new state
     if matches!(state, ClientState::Ended) {
@@ -438,7 +444,7 @@ async fn test_coordinator_case_handler(
       continue; // no response required
     }
 
-    send_protocol_response(&mut write, &response.unwrap()).await?;
+    send_protocol_response(&write, &response.unwrap()).await?;
   }
 }
 
@@ -459,7 +465,7 @@ fn handle_client_msg(
   state: ClientState,
   msg: TestMessage,
   packets: &mut dyn PacketProvider,
-  results: Arc<Mutex<TestResults>>,
+  results: &Arc<Mutex<TestResults>>,
 ) -> Result<(ClientState, Option<Vec<u8>>)> {
   match state {
     ClientState::Init => match msg {
@@ -473,7 +479,7 @@ fn handle_client_msg(
           "test {id:?} ended: {status:?}, idx: {}",
           test_index.0
         ));
-        try_lock_anhw(&results)?.push(LogResult {
+        try_lock_anhw(results)?.push(LogResult {
           uid: id,
           call: call_idx,
           pkt: test_index,
@@ -484,11 +490,11 @@ fn handle_client_msg(
       }
       TestMessage::PacketRequest(idx) => {
         Log::get("handle_client_msg").trace(format!("{msg:?}"));
-        let response = packets.get_packet(id, idx.0 as usize);
+        let response = packets.get_packet(id, usize::try_from(idx.0)?);
         Ok((state, response))
       }
       TestMessage::End => Ok((ClientState::Ended, None)),
-      _ => bail!("Invalid transition from Started state with msg {msg:?}"),
+      TestMessage::Start(..) => bail!("Invalid transition from Started state with msg {msg:?}"),
     },
     ClientState::Ended => bail!(
       "Client state is Ended, no more messages were expected msg: {msg:?}, from state: {state:?}"
@@ -496,7 +502,7 @@ fn handle_client_msg(
   }
 }
 
-async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<()> {
+async fn raw_send_to_client(stream: &OwnedWriteHalf, data: &[u8]) -> Result<()> {
   let mut idx = 0;
   loop {
     stream.writable().await?;
@@ -507,11 +513,8 @@ async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<
           return Ok(());
         }
         idx += n;
-        continue;
       }
-      Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => {
-        continue;
-      }
+      Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => (),
       Err(e) => {
         bail!(e.to_string());
       }
@@ -521,11 +524,11 @@ async fn raw_send_to_client(stream: &mut OwnedWriteHalf, data: &[u8]) -> Result<
 
 /// sends response in accordance with the comms protocol between the test client and this server
 /// (length + payload)
-async fn send_protocol_response(write_stream: &mut OwnedWriteHalf, response: &[u8]) -> Result<()> {
+async fn send_protocol_response(write_stream: &OwnedWriteHalf, response: &[u8]) -> Result<()> {
   // send response length + response
   raw_send_to_client(
     write_stream,
-    &(response.as_ref().len() as u32).to_le_bytes(),
+    &u32::try_from(response.as_ref().len())?.to_le_bytes(),
   )
   .await?;
 
@@ -546,7 +549,7 @@ impl TestJobFailure {
     Self {
       log_res: LogResult::from_test(
         t,
-        status.unwrap_or(TestStatus::Fatal(String::from(message.as_ref()))),
+        status.unwrap_or_else(|| TestStatus::Fatal(String::from(message.as_ref()))),
       ),
     }
   }
@@ -577,7 +580,7 @@ pub async fn singular_test_job(
       )
     })?;
 
-    send_test_metadata(guard.deref_mut(), infra_params, test, None)
+    send_test_metadata(&mut guard, infra_params, test, None)
       .map_err(|e| mk_error(e, TestStatus::Timeout))?;
   }
   // prepare the "command", mainly the std out/err
@@ -589,14 +592,14 @@ pub async fn singular_test_job(
     cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
       |e| {
         mk_error(
-          anyhow!("Stdout file creation failed: {e} {out_path:?}"),
+          anyhow!("Stdout file creation failed: {e} {}", out_path.display()),
           TestStatus::Fatal("Stdout create".to_owned()),
         )
       },
     )?));
     cmd.stderr(Stdio::from(File::create(err_path).map_err(|e| {
       mk_error(
-        anyhow!("Stderr file creation failed {e} {out_path:?}"),
+        anyhow!("Stderr file creation failed {e} {}", out_path.display()),
         TestStatus::Fatal("Stderr create".to_owned()),
       )
     })?));
@@ -656,7 +659,7 @@ pub async fn singular_restore_job(
         TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
       )
     })?;
-    send_test_metadata(guard.deref_mut(), infra_params, test, checkpoint_path)
+    send_test_metadata(&mut guard, infra_params, test, checkpoint_path)
       .map_err(|e| mk_error(e, TestStatus::Timeout))?;
     restore_path.to_string()
   };
@@ -711,7 +714,7 @@ pub enum CheckpointJobMode<'a> {
 struct CRIUCheckpointIndex(usize);
 
 fn get_criu_path(
-  i: CRIUCheckpointIndex,
+  i: &CRIUCheckpointIndex,
   output_gen: &Arc<TestOutputPathGen>,
   test_for_err: &TestRegisryItem,
 ) -> std::result::Result<String, TestJobFailure> {
@@ -765,9 +768,9 @@ pub async fn singular_checkpointing_job(
 
   match mode {
     CheckpointJobMode::Restore(idx) => {
-      let checkpoint_path = get_criu_path(CRIUCheckpointIndex(idx), &output_gen, test)?;
+      let checkpoint_path = get_criu_path(&CRIUCheckpointIndex(idx), &output_gen, test)?;
       // must perform restoration based on the previous index
-      let previous_cpoint_path = get_criu_path(CRIUCheckpointIndex(idx - 1), &output_gen, test)?;
+      let previous_cpoint_path = get_criu_path(&CRIUCheckpointIndex(idx - 1), &output_gen, test)?;
       // restore job from a checkpoint path with specific parameters
       singular_restore_job(
         metadata_svr,
@@ -780,7 +783,7 @@ pub async fn singular_checkpointing_job(
       .await
     }
     CheckpointJobMode::New(cmd, idx) => {
-      let checkpoint_path = get_criu_path(CRIUCheckpointIndex(idx), &output_gen, test)?;
+      let checkpoint_path = get_criu_path(&CRIUCheckpointIndex(idx), &output_gen, test)?;
       // performing a new checkpoint
       // prepare job parameters
       {
@@ -794,13 +797,8 @@ pub async fn singular_checkpointing_job(
             TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
           )
         })?;
-        send_test_metadata(
-          guard.deref_mut(),
-          infra_params,
-          test,
-          Some(&checkpoint_path),
-        )
-        .map_err(|e| mk_error(e, TestStatus::Timeout))?;
+        send_test_metadata(&mut guard, infra_params, test, Some(&checkpoint_path))
+          .map_err(|e| mk_error(e, TestStatus::Timeout))?;
       };
 
       // prepare the "command", mainly the std out/err
@@ -808,20 +806,24 @@ pub async fn singular_checkpointing_job(
         .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
       let out_path = output_gen.get_out_path(test);
       let err_path = output_gen.get_err_path(test);
-      lg.trace(format!("Job {test:?} outputs: {out_path:?}, {err_path:?}"));
+      lg.trace(format!(
+        "Job {test:?} outputs: {}, {}",
+        out_path.display(),
+        err_path.display()
+      ));
       cmd
         .stdin(Stdio::null())
         .stdout(Stdio::from(File::create(out_path.clone()).map_err(
           |e| {
             mk_error(
-              anyhow!("Stdout file creation failed: {e} {out_path:?}"),
+              anyhow!("Stdout file creation failed: {e} {}", out_path.display()),
               TestStatus::Fatal("Stdout create".to_owned()),
             )
           },
         )?))
         .stderr(Stdio::from(File::create(err_path).map_err(|e| {
           mk_error(
-            anyhow!("Stderr file creation failed {e} {out_path:?}"),
+            anyhow!("Stderr file creation failed {e} {}", out_path.display()),
             TestStatus::Fatal("Stderr create".to_owned()),
           )
         })?));
@@ -912,19 +914,16 @@ impl TestOutputPathGen {
   fn ensure_dir(path: &PathBuf) -> Result<()> {
     ensure!(
       !path.exists() || path.is_dir(),
-      format!("Path {path:?} is not a directory!")
+      format!("Path {} is not a directory!", path.display())
     );
     if !path.exists() {
-      std::fs::create_dir(path).map_err(|e| anyhow!(e))?
+      std::fs::create_dir(path).map_err(|e| anyhow!(e))?;
     }
     Ok(())
   }
 
-  pub fn make(base: Option<PathBuf>) -> Result<Option<Self>> {
-    if base.is_none() {
-      return Ok(None);
-    }
-    let base = base.unwrap().to_owned();
+  pub fn make(base: Option<&PathBuf>) -> Result<Option<Self>> {
+    let Some(base) = base else { return Ok(None) };
     let tmp_parent = if base.is_dir() {
       base.clone()
     } else {
@@ -942,7 +941,7 @@ impl TestOutputPathGen {
       Self {
         dir: base.is_dir(),
         tmp_dir: tmp_path,
-        base,
+        base: base.clone(),
         criu_dumps_dir,
       }
       .into(),
@@ -953,7 +952,7 @@ impl TestOutputPathGen {
     let path = self.criu_dumps_dir.join(format!("{index}"));
     Self::ensure_dir(&path)
       .map_err(|e| anyhow!(e))
-      .map(|_| path)
+      .map(|()| path)
   }
 
   pub fn get_out_path(&self, tst: &TestRegisryItem) -> PathBuf {
@@ -1016,7 +1015,7 @@ impl TestOutputPathGen {
 pub fn inspect_packet(
   spec: &PacketInspecSpec,
   modules: &ExtModuleMap,
-  reader: &mut PacketReader,
+  reader: &PacketReader,
 ) -> Result<()> {
   let (fn_uid, pkt_idx) = (spec.0, spec.1);
   let (fnid, modid) = (fn_uid.function_id, fn_uid.module_id);
@@ -1080,7 +1079,7 @@ pub struct PartialRegistryItem {
   pub test_count: u32,
   pub test_case_timeout: Duration,
   pub global_timeout: Option<Duration>,
-  pub thread_counts: Rc<Vec<u64>>,
+  pub thread_counts: Arc<Vec<u64>>,
 }
 struct CommonTestingPhaseStore {
   pub test_registry: TestRegistry,
@@ -1143,14 +1142,13 @@ impl TestingPhase for MTSupportTesting {
     for (thread_idx, call_count) in thread_counts.iter().enumerate() {
       for call_index in 0..*call_count {
         for packet_index in 0..test_count {
-          let thread_idx = thread_idx as u32;
           tests.push(self.common.test_registry.add_new_test(
             TestRegisryItem {
               uid,
-              call_index: CallIndexT(call_index as u32),
-              packet_index: PacketIndexT(packet_index as u64),
-              thread_lid: ThreadLidT(thread_idx as u64),
-              thread_count: thread_counts.len() as u32,
+              call_index: CallIndexT(u32::try_from(call_index)?),
+              packet_index: PacketIndexT(packet_index.into()),
+              thread_lid: ThreadLidT(u64::try_from(thread_idx)?),
+              thread_count: u32::try_from(thread_counts.len())?,
               test_count,
               timeout_test,
               timeout_process: Some(timeout_test),
@@ -1177,7 +1175,7 @@ impl TestingPhase for MTSupportTesting {
         .get_test_params(*test)
         .ok_or(anyhow!("Inconsistent test registry"))?;
       lg.trace(format!("Start test {tst:?}"));
-      let cmdline = cmd.iter().map(|v| v.as_str()).collect::<Vec<&str>>();
+      let cmdline = cmd.iter().map(String::as_str).collect::<Vec<&str>>();
       let test_job = singular_test_job(
         meta.clone(),
         self.common.params.infra,
@@ -1370,7 +1368,8 @@ impl CheckpointedTesting {
       Some((tc, _)) => (tc.thread_lid.0, tc.call_index.0, None),
     };
 
-    let idx_overflows = partial.thread_counts[usize::try_from(n_thread_id)?] <= u64::from(n_call_idx);
+    let idx_overflows =
+      partial.thread_counts[usize::try_from(n_thread_id)?] <= u64::from(n_call_idx);
     let (n_thread_id, n_call_idx) = if idx_overflows {
       (n_thread_id + 1, 0)
     } else {
@@ -1399,7 +1398,7 @@ impl CheckpointedTesting {
             i,
             n_call_idx
           );
-           u32::try_from(i)?
+          u32::try_from(i)?
         }
         CheckpointState::End => bail!("This should not have happened!"),
       }),
@@ -1429,7 +1428,7 @@ impl TestingPhase for CheckpointedTesting {
   fn prepare_cases(&mut self, command: &[String], partial: &PartialRegistryItem) -> Result<bool> {
     const STOP: Result<bool> = Ok(false);
     // prepare the checkpointing case
-    if let Ok(false) = self.make_checkpointing_case(command, partial) {
+    if matches!(self.make_checkpointing_case(command, partial), Ok(false)) {
       return STOP;
     }
     ensure!(self.checkpointing_testcase.is_some(), "invariant broken");
@@ -1486,10 +1485,11 @@ impl TestingPhase for CheckpointedTesting {
 
       let (tst, cmd) = &self.checkpointing_testcase.as_ref().unwrap();
 
-      let checkpoint_mode = match cmd {
-        Some(cmdline) => CheckpointJobMode::New(cmdline, tst.call_index.0 as usize),
-        None => CheckpointJobMode::Restore(tst.call_index.0 as usize),
-      };
+      let checkpoint_mode = cmd.as_ref().map_or(
+        CheckpointJobMode::Restore(tst.call_index.0 as usize),
+        |cmdline| CheckpointJobMode::New(cmdline, tst.call_index.0 as usize),
+      );
+
       lg.trace(format!(
         "Starting checkpointing process in mode {checkpoint_mode:?}"
       ));
@@ -1527,7 +1527,7 @@ impl TestingPhase for CheckpointedTesting {
         .ok_or(anyhow!("Inconsistent test registry"))?;
       lg.trace(format!("Start test {tst:?}"));
       let dump_path = get_criu_path(
-        CRIUCheckpointIndex(restoration_idx as usize),
+        &CRIUCheckpointIndex(restoration_idx as usize),
         &self.output_generator,
         tst,
       );

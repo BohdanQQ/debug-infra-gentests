@@ -1,7 +1,6 @@
 use std::{
   ffi::CStr,
   io::{Read, Write},
-  ops::DerefMut,
   os::unix::process::ExitStatusExt,
   path::{Path, PathBuf},
   sync::{Arc, Mutex},
@@ -11,7 +10,10 @@ use std::{
 use crate::{
   log::Log,
   modmap::ExtModuleMap,
-  shmem_capture::{FinalizerInfraInfo, MetadataPublisher, hooklib_commons::*},
+  shmem_capture::{
+    FinalizerInfraInfo, MetadataPublisher,
+    hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA},
+  },
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
@@ -58,10 +60,9 @@ fn spawn_process_monitor(
             std::thread::sleep(Duration::from_millis(300));
             let _ = fnlzr_infra.finalization_flush().inspect_err(|e| lg.crit(format!("Failed to finalize comms... manual cleanup most likely required, please terminate llcap-server and perform cleanup (--cleanup)\nError: {e}")));
             break;
-          } else {
-            lg.progress(format!("App terminated with exit code {:?}", code.code()));
-            break;
           }
+          lg.progress(format!("App terminated with exit code {:?}", code.code()));
+          break;
         }
         Ok(_) => (),
         Err(e) => {
@@ -80,9 +81,9 @@ fn spawn_process_monitor(
 /// a generic driver function that wraps around the launch of the requested
 /// application & the monitoring thread
 ///
-/// cmd - command to be executed as a child process
-/// meta_sender - function that performs metadata sending (according to capture type)
-/// capture - function performing the capture (more like a closure that wraps the real invokation)
+/// `cmd` - command to be executed as a child process
+/// `meta_sender` - function that performs metadata sending (according to capture type)
+/// `capture` - function performing the capture (more like a closure that wraps the real invokation)
 ///
 /// the function simply abstracts away the child monitor thread
 pub async fn drive_instrumented_application<MetadataSender, CaptureHandler, R>(
@@ -103,15 +104,14 @@ where
     // do not hold accorss awaits
     let mut guard = metadata_svr.lock().unwrap();
     guard.re_new()?;
-    meta_sender(guard.deref_mut(), infra_params)?;
+    meta_sender(&mut guard, infra_params)?;
   }
 
   let spawned_child = cmd
     .spawn()
     .map_err(|e| anyhow!("Failed to spawn from command {e}"))?;
 
-  let (monitor_ready_rx, child_monitor) =
-    spawn_process_monitor(spawned_child, finalizer_info);
+  let (monitor_ready_rx, child_monitor) = spawn_process_monitor(spawned_child, finalizer_info);
   lg.trace("Waiting for monitor start");
   match timeout(Duration::from_secs(10), monitor_ready_rx).await {
     Ok(Ok(val)) => ensure!(val, "Monitor NOT ready"),
@@ -176,6 +176,7 @@ impl CommonStageParams {
     buff_size: u32,
     modules_path: &PathBuf,
   ) -> Result<(Self, ExtModuleMap)> {
+    const MIN_BUFF_SIZE: u32 = 16;
     let modules = obtain_module_map(modules_path)?;
     let sem_str = null_terminated_to_string(META_SEM_DATA)?;
     let ack_str = null_terminated_to_string(META_SEM_ACK)?;
@@ -183,7 +184,6 @@ impl CommonStageParams {
       buff_size % 8 == 0,
       "Buffer size must be a multiple of 8 due to alignment requirements (thread ID)"
     );
-    const MIN_BUFF_SIZE: u32 = 16;
     // this is a hooklib limit and must be kept in sync
     // use e2e tests to check for validity of this value (run tests with buffer size equal to MIN_BUFF_SIZE)
     ensure!(
@@ -192,7 +192,7 @@ impl CommonStageParams {
       MIN_BUFF_SIZE
     );
     Ok((
-      CommonStageParams {
+      Self {
         infra: InfraParams {
           buff_count,
           buff_len: buff_size,
@@ -223,10 +223,10 @@ pub fn dump_thread_counts(root: &Path, counts: &[u64]) -> Result<usize> {
   let line = counts
     .iter()
     .map(|v| format!("{v}"))
-    .fold("".to_owned(), |acc, v| format!("{acc} {v}"))
+    .fold(String::new(), |acc, v| format!("{acc} {v}"))
     + "\n";
   let file_path = get_thread_counts_path(root);
-  Log::get("dump_thread_counts").trace(format!("dumping thread counts {file_path:?}"));
+  Log::get("dump_thread_counts").trace(format!("dumping thread counts {}", file_path.display()));
   let mut file = std::fs::File::create(file_path).map_err(|e| anyhow!(e))?;
   file.write(line.as_bytes()).map_err(|e| anyhow!(e))
 }
@@ -236,7 +236,7 @@ pub fn read_thread_counts(root: &Path) -> Result<Vec<u64>> {
   let mut line = String::new();
 
   let lg = Log::get("read_thread_counts");
-  lg.trace(format!("parsing thread counts {file_path:?}"));
+  lg.trace(format!("parsing thread counts {}", file_path.display()));
 
   std::fs::File::open(file_path)
     .map_err(|e| anyhow!(e))?
@@ -248,7 +248,7 @@ pub fn read_thread_counts(root: &Path) -> Result<Vec<u64>> {
 
   let str_list = line.split_at(newline.unwrap().0).0;
   str_list
-    .split(" ")
+    .split(' ')
     .skip(1) // see the encoding, there is a leading space on the line, we're skipping it here
     .try_fold(Vec::new(), |mut acc, v| {
       let val = v

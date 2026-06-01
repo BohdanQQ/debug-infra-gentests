@@ -13,7 +13,7 @@ pub enum ReadProgress {
   },
   /// all bytes from input consumed, result not complete yet, send another buffer
   NotYet,
-  /// buffer left untouched, you should call reset()
+  /// buffer left untouched, you should call `reset()`
   Nop,
 }
 
@@ -43,7 +43,7 @@ pub trait SizeTypeReader {
   /// returns true if reader was reset
   fn read_reset(&mut self) -> bool;
   /// consumes bytes from data
-  /// may consume any number of bytes (up to length), refer to ReadProgress
+  /// may consume any number of bytes (up to length), refer to `ReadProgress`
   /// for return value information
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress>;
   /// indicates that reader has finished reading, data is ready
@@ -79,7 +79,7 @@ pub enum CustomTypeReader {
   Finished,
 }
 impl CustomTypeReader {
-  pub fn new() -> Self {
+  pub const fn new() -> Self {
     Self::Start
   }
 }
@@ -95,12 +95,12 @@ impl SizeTypeReader for CustomTypeReader {
 
   fn read(&mut self, data: &[u8]) -> Result<ReadProgress> {
     let (newself, result) = match self {
-      CustomTypeReader::Start => {
+      Self::Start => {
         let mut tgt_sz_buff = [0u8; 8];
         let idx = take_num_into_slice(8, 0, &mut tgt_sz_buff, data);
         if idx == tgt_sz_buff.len() && tgt_sz_buff.len() == data.len() {
           (
-            Some(CustomTypeReader::Reading {
+            Some(Self::Reading {
               target_size: u64::from_le_bytes(tgt_sz_buff),
               payload: vec![],
             }),
@@ -117,7 +117,7 @@ impl SizeTypeReader for CustomTypeReader {
           )
         } else {
           (
-            Some(CustomTypeReader::ReadingTgtSize {
+            Some(Self::ReadingTgtSize {
               idx: idx as u8,
               bytes: tgt_sz_buff,
             }),
@@ -125,12 +125,12 @@ impl SizeTypeReader for CustomTypeReader {
           )
         }
       }
-      CustomTypeReader::ReadingTgtSize { idx, bytes } => {
+      Self::ReadingTgtSize { idx, bytes } => {
         let uidx = *idx as usize;
         let offs = take_num_into_slice(8 - uidx, uidx, bytes, data);
         if offs == bytes.len() {
           (
-            Some(CustomTypeReader::Reading {
+            Some(Self::Reading {
               target_size: u64::from_le_bytes(*bytes),
               payload: vec![],
             }),
@@ -141,11 +141,11 @@ impl SizeTypeReader for CustomTypeReader {
           (None, ReadProgress::NotYet)
         }
       }
-      CustomTypeReader::Reading {
+      Self::Reading {
         target_size,
         payload,
       } => perform_reading_stage(data, 0, *target_size, payload, 0),
-      CustomTypeReader::Finished => (None, ReadProgress::Nop),
+      Self::Finished => (None, ReadProgress::Nop),
     };
     if let Some(newself) = newself {
       *self = newself;
@@ -154,7 +154,7 @@ impl SizeTypeReader for CustomTypeReader {
   }
 
   fn done(&self) -> bool {
-    matches!(self, CustomTypeReader::Finished)
+    matches!(self, Self::Finished)
   }
 }
 

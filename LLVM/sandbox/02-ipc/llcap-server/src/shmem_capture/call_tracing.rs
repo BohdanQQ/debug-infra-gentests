@@ -23,7 +23,7 @@ struct CallTraceMessageState {
 }
 
 impl CallTraceMessageState {
-  pub fn extract_messages(&mut self) -> Vec<Message> {
+  pub const fn extract_messages(&mut self) -> Vec<Message> {
     let mut msgs = vec![];
     std::mem::swap(&mut msgs, &mut self.messages);
     msgs
@@ -83,10 +83,10 @@ impl CaptureLoopState for CallTraceMessageState {
 impl CaptureLoop for CallTracing {
   type State = CallTraceMessageState;
 
-  fn update_from_buffer<'b>(
+  fn update_from_buffer(
     &mut self,
     mut state: Self::State,
-    mut buffer: BorrowedReadBuffer<'b>,
+    mut buffer: BorrowedReadBuffer<'_>,
     modules: &ExtModuleMap,
   ) -> Result<Self::State> {
     assert!(

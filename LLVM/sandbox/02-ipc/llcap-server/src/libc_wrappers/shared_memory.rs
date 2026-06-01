@@ -28,7 +28,7 @@ pub struct ShmemHandle {
   /// (that is, it should not happen that an immutable borrow results in a *mut u8 created
   /// somewhere down the call stack)
   underlying_memory: RefCell<*mut u8>,
-  /// number of bytes valid, starting from underlying_memory and spannign the entire mapped length
+  /// number of bytes valid, starting from `underlying_memory` and spannign the entire mapped length
   len: u32,
   _fd: i32,
   /// null-char-terminated string
@@ -38,12 +38,12 @@ pub struct ShmemHandle {
 
 impl ShmemHandle {
   // safety: mem_ptr shall not be used again
-  unsafe fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: String) -> Self {
+  unsafe fn new(mem_ptr: *mut c_void, len: u32, fd: i32, name: &str) -> Self {
     assert!(!mem_ptr.is_null());
     assert!(mem_ptr != MAP_FAILED);
     assert!(fd != -1);
     Self {
-      underlying_memory: RefCell::new(mem_ptr as *mut u8),
+      underlying_memory: RefCell::new(mem_ptr.cast::<u8>()),
       len,
       _fd: fd,
       cname: format!("{name}\x00"),
@@ -56,7 +56,7 @@ impl ShmemHandle {
     self.len
   }
 
-  pub fn borrow_ptr_mut(&mut self) -> Result<RefMut<'_, *mut u8>> {
+  pub fn borrow_ptr_mut(&self) -> Result<RefMut<'_, *mut u8>> {
     let borrow = self.underlying_memory.try_borrow_mut()?;
     Ok(borrow)
   }
@@ -68,7 +68,7 @@ impl ShmemHandle {
     // *mut u8 -> *const u8 cannot be writen via "as", at the same time I could not find a
     // reason why the transmute could be invalid (given we obtained the immutable borrow)
     let borrow = Ref::map(borrow, |v| unsafe {
-      std::mem::transmute::<&*mut u8, &*const u8>(v)
+      &*(std::ptr::from_ref::<*mut u8>(v).cast::<*const u8>())
     });
     Ok(borrow)
   }
@@ -81,7 +81,7 @@ impl ShmemHandle {
         try_shm_unlink_fd(path).map_err(|e| anyhow!("{e} - message: {error_string}"));
 
       match unlink_res {
-        Ok(_) => anyhow!(error_string),
+        Ok(()) => anyhow!(error_string),
         Err(s) => anyhow!(s),
       }
     };
@@ -95,7 +95,7 @@ impl ShmemHandle {
     );
 
     // SAFETY: documentation of the syscall, fd obtained beforehand
-    let truncation = unsafe { ftruncate(fd, len as i64) };
+    let truncation = unsafe { ftruncate(fd, len.into()) };
     ensure!(
       truncation != -1,
       unlinking_handler(format!(
@@ -128,13 +128,13 @@ impl ShmemHandle {
     );
 
     // SAFETY: mmap_res is not used elsewhere
-    Ok(unsafe { Self::new(mmap_res, len, fd, path.to_string_lossy().to_string()) })
+    Ok(unsafe { Self::new(mmap_res, len, fd, &path.to_string_lossy()) })
   }
 
-  pub fn try_unmap(mut self) -> Result<()> {
+  pub fn try_unmap(self) -> Result<()> {
     // SAFETY: syscall docs, ShmHandle's invariant
     let len = self.len as usize;
-    let unmap_res = unsafe { munmap(*self.borrow_ptr_mut()? as *mut c_void, len) };
+    let unmap_res = unsafe { munmap((*self.borrow_ptr_mut()?).cast::<c_void>(), len) };
     ensure!(
       unmap_res == 0,
       format!(

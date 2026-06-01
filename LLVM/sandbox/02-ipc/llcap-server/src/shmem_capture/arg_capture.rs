@@ -25,8 +25,8 @@ fn get_sizetype_readers() -> SizeTypeReaders {
 }
 
 impl SizeTypeReaders {
-  pub fn get_reader(&mut self) -> Option<&mut Box<dyn SizeTypeReader>> {
-    Some(&mut self.custom)
+  pub fn get_reader(&mut self) -> &mut Box<dyn SizeTypeReader> {
+    &mut self.custom
   }
 }
 
@@ -58,7 +58,7 @@ enum PartialCaptureState {
 }
 
 impl PartialCaptureState {
-  /// reads module ID and shifts raw_buff by the size of module ID
+  /// reads module ID and shifts `raw_buff` by the size of module ID
   fn progress_read_mod_id(raw_buff: &mut ReadOnlyBufferPtr, mods: &ExtModuleMap) -> Result<Self> {
     let lg = Log::get("progress_get_module_id");
     lg.trace(format!("Start {:02X?}", raw_buff.as_slice()));
@@ -74,7 +74,7 @@ impl PartialCaptureState {
     Ok(Self::GotModuleId { module_id: rcvd_id })
   }
 
-  /// reads function ID and shifts raw_buff by the size of function ID
+  /// reads function ID and shifts `raw_buff` by the size of function ID
   fn progress_read_fn_id(
     raw_buff: &mut ReadOnlyBufferPtr,
     mods: &ExtModuleMap,
@@ -112,7 +112,7 @@ impl PartialCaptureState {
     })
   }
 
-  /// reads all arguments necessary/available and shifts raw_buff
+  /// reads all arguments necessary/available and shifts `raw_buff`
   /// according to the argument types (could be determined dynamically)
   fn progress_read_args(
     raw_buff: &mut ReadOnlyBufferPtr,
@@ -125,9 +125,7 @@ impl PartialCaptureState {
   ) -> Result<Self> {
     let lg = Log::get("progress_read_args");
     let size_refs = mods.get_function_arg_size_descriptors(id);
-    let size_refs = if let Some(s) = size_refs {
-      s
-    } else {
+    let Some(size_refs) = size_refs else {
       bail!("Unknown function {id:?}");
     };
     // for each argument description, parse the argument from the buffer
@@ -144,12 +142,7 @@ impl PartialCaptureState {
       }
 
       // obtain an argument reader that will read the packet
-      let reader = if let Some(r) = readers.get_reader() {
-        r
-      } else {
-        bail!("Unexpected size type that is missing a reader {desc:?}");
-      };
-
+      let reader = readers.get_reader();
       let slice = raw_buff.as_slice();
       match reader.read(slice)? {
         // reader is done, argument is ready
@@ -209,8 +202,8 @@ impl PartialCaptureState {
     })
   }
 
-  /// tries to parse an argument packet using the data from raw_buff
-  /// This function mutates (shifts) the raw_buff
+  /// tries to parse an argument packet using the data from `raw_buff`
+  /// This function mutates (shifts) the `raw_buff`
   pub fn progress(
     self,
     raw_buff: &mut ReadOnlyBufferPtr,
@@ -304,13 +297,13 @@ impl CaptureLoopState for ArgCaptureState {
   }
 }
 
-impl<'a> CaptureLoop for ArgCapture<'a> {
+impl CaptureLoop for ArgCapture<'_> {
   type State = ArgCaptureState;
 
-  fn update_from_buffer<'b>(
+  fn update_from_buffer(
     &mut self,
     mut state: Self::State,
-    mut buffer: BorrowedReadBuffer<'b>,
+    mut buffer: BorrowedReadBuffer<'_>,
     modules: &ExtModuleMap,
   ) -> Result<Self::State> {
     let buff = &mut buffer.buffer;
@@ -332,11 +325,11 @@ impl<'a> CaptureLoop for ArgCapture<'a> {
         PartialCaptureState::Done {
           id,
           thread_id,
-          mut buff,
+          buff,
         } => {
           // save the received packet
           if let Some(dumper) = self.capture_target.get_packet_dumper(id) {
-            dumper.dump(&mut buff)?;
+            dumper.dump(&buff)?;
           }
           Log::get("argCap update_from_buffer").trace(format!("{buff:02X?}"));
           // register the thread

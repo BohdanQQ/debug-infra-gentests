@@ -125,7 +125,7 @@ impl Logger {
 
   // an unconditional log
   pub fn progress<T: AsRef<str>>(&self, msg: T) {
-    self.inner_log.log_progress(&self.formatted(msg.as_ref()))
+    Log::log_progress(&self.formatted(msg.as_ref()));
   }
 }
 
@@ -152,14 +152,14 @@ impl Log {
     }
   }
 
-  fn log(&self, lvl: LogLevel, msg: &str) {
+  fn log(self, lvl: LogLevel, msg: &str) {
     if u8::from(lvl) > u8::from(self.level) {
       return;
     }
     eprintln!("{} {}", Log::log_level_preamble(lvl), msg);
   }
 
-  fn log_progress(&self, msg: &str) {
+  fn log_progress(msg: &str) {
     println!("P | {msg}");
   }
 }
@@ -220,10 +220,10 @@ impl LogStrategy {
   async fn put_str_format(&mut self, json_str: &str, stdout_str: &str) -> anyhow::Result<()> {
     match self {
       Self::StdOut => {
-        if !stdout_str.is_empty() {
-          self.put_str(stdout_str).await
-        } else {
+        if stdout_str.is_empty() {
           Ok(())
+        } else {
+          self.put_str(stdout_str).await
         }
       }
       Self::PlainText(_) => self.put_str(stdout_str).await,
@@ -247,7 +247,7 @@ impl LogStrategy {
       | Self::PlainText(file) => {
         file.write_all(s.as_bytes()).await?;
       }
-    };
+    }
     Ok(())
   }
 
@@ -260,7 +260,7 @@ impl LogStrategy {
       detail: _,
     } = self
     {
-      *first = false
+      *first = false;
     }
     Ok(())
   }

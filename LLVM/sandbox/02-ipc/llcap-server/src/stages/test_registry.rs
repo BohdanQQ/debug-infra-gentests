@@ -28,15 +28,15 @@ pub struct TestRegisryItem {
 }
 
 impl TestRegisryItem {
-  pub fn target_call_number(&self) -> u32 {
+  pub const fn target_call_number(&self) -> u32 {
     self.call_index.0 + 1
   }
 
-  pub fn test_timeout_s(&self) -> u16 {
+  pub const fn test_timeout_s(&self) -> u16 {
     self.timeout_test.as_secs() as u16
   }
 
-  pub fn terminate_child(&self) -> bool {
+  pub const fn terminate_child(&self) -> bool {
     !matches!(self.mode, TestingMode::MTCompatTesting)
   }
 
@@ -82,12 +82,11 @@ impl TestRegistry {
       .iter()
       .enumerate()
       .find(|(_, v)| v.len() == cmdline.len() && v.iter().zip(cmdline).all(|(v1, v2)| v1 == v2));
-    let index = match index {
-      Some(idx) => idx.0,
-      None => {
-        self.cmds.push(Vec::from(cmdline));
-        self.cmds.len() - 1
-      }
+    let index = if let Some(idx) = index {
+      idx.0
+    } else {
+      self.cmds.push(Vec::from(cmdline));
+      self.cmds.len() - 1
     };
     self.cmd_map.insert(new_id, index);
     new_id

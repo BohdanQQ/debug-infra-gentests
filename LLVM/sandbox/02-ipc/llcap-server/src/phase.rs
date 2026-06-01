@@ -1,6 +1,5 @@
 use std::{
-  path::PathBuf,
-  rc::Rc,
+  path::{Path, PathBuf},
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -47,7 +46,7 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
     |ms| {
       ms.into_inner()
         .map_err(|v| anyhow!("Failed to obtain mtx: {v}"))
-        .and_then(|v| v.deinit())
+        .and_then(MetadataPublisher::deinit)
     },
   )
 }
@@ -62,7 +61,7 @@ pub async fn calltrace_phase(
   let lg = Log::get("calltrace_phase");
   let pairs = if let Some(in_path) = import_path {
     lg.trace("Importing");
-    let result = import_call_trace_data(in_path, modules)?;
+    let result = import_call_trace_data(&in_path, modules)?;
     lg.progress("Import done");
     result
   } else {
@@ -91,7 +90,7 @@ pub async fn calltrace_phase(
     let real_result = tracing_infra
       .deinit()
       .inspect_err(|e| lg.crit(format!("You might need to perform cleanup: {e}")))
-      .map(|_| result)?;
+      .map(|()| result)?;
 
     // this should not really fail unless metadata_svr is cloned and persisted somewhere it should not be (i.e we should be the sole owners of metadata_svr here)
     try_meta_svr_arc_deinit(metadata_svr)?;
@@ -140,12 +139,17 @@ pub async fn arg_capture_phase(
   res
 }
 
-pub fn try_lock_anhw<'a, T>(results: &'a Arc<Mutex<T>>) -> Result<std::sync::MutexGuard<'a, T>> {
+pub fn try_lock_anhw<T, S>(results: &S) -> Result<std::sync::MutexGuard<'_, T>>
+where
+  S: AsRef<Mutex<T>>,
+{
   results
+    .as_ref()
     .try_lock()
     .map_err(|e| anyhow!("Failed to lock {e}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn testing_phase(
   mode: args::TestingMode,
   common_params: Arc<CommonStageParams>,
@@ -154,17 +158,15 @@ pub async fn testing_phase(
   modules: &ExtModuleMap,
   packet_reader: &PacketReader,
   command: Arc<Vec<String>>,
-  test_output: &Option<PathBuf>,
-  thread_counts: Rc<Vec<u64>>,
+  test_output: Option<&PathBuf>,
+  thread_counts: Arc<Vec<u64>>,
   results: Arc<Mutex<Vec<LogResult>>>,
   metadata_svr: Arc<Mutex<MetadataPublisher>>,
 ) -> Result<Vec<TestJobFailure>> {
   let mut errors = vec![];
 
   for module in modules.modules() {
-    let fns_in_mod = if let Some(v) = modules.functions(*module) {
-      v
-    } else {
+    let Some(fns_in_mod) = modules.functions(*module) else {
       bail!("Unexpected mapping");
     };
     for function in fns_in_mod {
@@ -187,7 +189,7 @@ pub async fn testing_phase(
 
       match mode {
         args::TestingMode::Basic => {
-          let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+          let output_gen = Arc::new(TestOutputPathGen::make(test_output)?);
           let p = BasicTesting::new(common_params.clone(), output_gen.clone());
           run_test_case(
             p,
@@ -206,7 +208,7 @@ pub async fn testing_phase(
           .await
         }
         args::TestingMode::MTSupport => {
-          let output_gen = Arc::new(TestOutputPathGen::make(test_output.clone())?);
+          let output_gen = Arc::new(TestOutputPathGen::make(test_output)?);
           let p = MTSupportTesting::new(common_params.clone(), output_gen.clone());
           run_test_case(
             p,
@@ -232,9 +234,7 @@ pub async fn testing_phase(
           // Require running as root (restoration requires it)
           // - or allow nonroot but warn regarding the --unpriviliged option usage
           // (and propagate the info that the option is used)
-          let output_gen = if let Some(v) = TestOutputPathGen::make(test_output.clone())? {
-            v
-          } else {
+          let Some(output_gen) = TestOutputPathGen::make(test_output)? else {
             bail!("Output must be specified");
           };
           let output_gen = Arc::new(output_gen);
@@ -242,7 +242,7 @@ pub async fn testing_phase(
           let mut p =
             CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
           // TODO: use run_test_case (either adapt it for next_batch or get rid of nxt_btch)
-          while let Some(()) = p.next_batch() {
+          while Some(()) == p.next_batch() {
             let has_tests = p.prepare_cases(
               &command,
               &PartialRegistryItem {
@@ -269,12 +269,9 @@ pub async fn testing_phase(
   Ok(errors)
 }
 
-pub fn mask_fn_selection(
-  selection_file: PathBuf,
-  mut modules: ExtModuleMap,
-) -> Result<ExtModuleMap> {
+pub fn mask_fn_selection(selection_file: &Path, mut modules: ExtModuleMap) -> Result<ExtModuleMap> {
   //lg.progress("Reading function selection");
-  let selection = import_tracing_selection(&selection_file)?;
+  let selection = import_tracing_selection(selection_file)?;
   //lg.progress("Masking");
   modules.mask_include(&selection)?;
   Ok(modules)

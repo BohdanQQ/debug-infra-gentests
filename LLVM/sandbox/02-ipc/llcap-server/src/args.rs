@@ -102,7 +102,7 @@ pub enum Stage {
     selection_path: Option<PathBuf>,
 
     /// Command to execute the binary whose calls we want to trace.
-    /// Not desired when import_path is set
+    /// Not desired when `import_path` is set
     #[arg(trailing_var_arg(true))]
     command: Option<Vec<String>>,
   },
@@ -163,7 +163,7 @@ pub enum Stage {
     #[arg(trailing_var_arg(true))]
     command: Vec<String>,
 
-    /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte HEXAdecimal module/function id and DD is a DECIMAL index of the packet
+    /// Print out information about a specific function argument packet and exit. Input format is in form MX-FX-DD where M/FX is 4-byte hexadecimal module/function id and DD is a DECIMAL index of the packet
     #[arg(long, value_parser=parse_pkt_inspect)]
     inspect_packets: Option<PacketInspecSpec>,
 

@@ -1,5 +1,4 @@
 use std::{
-  rc::Rc,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -60,6 +59,7 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
   )
 }
 
+#[allow(clippy::too_many_lines)]
 #[tokio::main()]
 async fn main() -> Result<()> {
   let cli = Cli::try_parse()?;
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
       if let Some(out_path) = out_file {
         lg.trace("Exporting");
 
-        let _ = export_call_trace_data(&fn_freqs, out_path)
+        let _ = export_call_trace_data(&fn_freqs, &out_path)
           .inspect_err(|e| lg.crit(format!("Export failed: {e}")));
 
         lg.progress("Export done");
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
       mem_limit,
       command,
     } => {
-      let modules = mask_fn_selection(selection_file, modules)?;
+      let modules = mask_fn_selection(&selection_file, modules)?;
 
       arg_capture_phase(
         out_dir,
@@ -147,22 +147,18 @@ async fn main() -> Result<()> {
       detailed_report,
       testing_mode,
     } => {
-      let modules = Arc::new(mask_fn_selection(selection_file, modules)?);
+      let modules = Arc::new(mask_fn_selection(&selection_file, modules)?);
       let command = Arc::new(command);
       lg.progress("Setting up function packet reader");
 
-      let mut packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
+      let packet_reader = PacketReader::new(&capture_dir, &modules, mem_limit as usize)
         .map_err(|e| anyhow!("Packet reader setup failed: {e}"))?;
-      let thread_counts = Rc::new(
+      let thread_counts = Arc::new(
         read_thread_counts(&capture_dir)
           .map_err(|e| anyhow!("Thread counter parsing failed: path: {e}"))?,
       );
       if let Some(inspection_spec) = inspect_packet {
-        return crate::stages::testing::inspect_packet(
-          &inspection_spec,
-          &modules,
-          &mut packet_reader,
-        );
+        return crate::stages::testing::inspect_packet(&inspection_spec, &modules, &packet_reader);
       }
       // redeclare as immutable
       let packet_reader = packet_reader;
@@ -194,7 +190,7 @@ async fn main() -> Result<()> {
         &modules,
         &packet_reader,
         command,
-        &test_output,
+        test_output.as_ref(),
         thread_counts,
         results.clone(),
         metadata_svr.clone(),
@@ -202,7 +198,9 @@ async fn main() -> Result<()> {
       .await;
 
       lg.progress("Waiting for server to exit...");
-      let defer_res_end_svr = end_tx.send(()).map_err(|()| anyhow!("failed to end server"));
+      let defer_res_end_svr = end_tx
+        .send(())
+        .map_err(|()| anyhow!("failed to end server"));
       let defer_res_joins = svr.await.map_err(|e| anyhow!("joins: {e}"));
       let errors = result?;
 
