@@ -1,18 +1,17 @@
 #include "checkpoint.hpp"
+#include "debug.hpp"
 #include "shm_commons.h"
 #include <criu/criu.h>
 #include <cstdint>
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>
+#include <format>
+#include <iostream>
 #include <sstream>
 #include <string>
 #include <sys/types.h>
 #include <unistd.h>
-#include "debug.hpp"
-#include <print>
-#include <format>
-#include <iostream>
 
 /* NOTES:
 
@@ -120,6 +119,9 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
   }
   criu_local_set_shell_job(opts, shellJob);
   criu_local_set_log_level(opts, 4); // max
+  // TODO: maybe a limiatation (nested checkpoints report errors)
+  // try removing this once everything works
+  criu_local_set_network_lock(opts, CRIU_NETWORK_LOCK_SKIP);
   return opts;
 }
 

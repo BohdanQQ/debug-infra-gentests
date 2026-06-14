@@ -705,7 +705,10 @@ impl MetadataPublisher {
     }
 
     {
-      Log::get("MetadataPublisher::publish").trace(format!("Thread Count {}", meta.thread_count));
+      Log::get("MetadataPublisher::publish").trace(format!(
+        "Threads: {}, Tests: {}",
+        meta.thread_count, meta.test_count
+      ));
 
       let mem = self.shm.borrow_ptr_mut()?;
       unsafe {
@@ -723,29 +726,6 @@ impl MetadataPublisher {
     self.data_ack_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     self.data_rdy_sem.try_destroy().map_err(|e| anyhow!(e.1))?;
     Ok(())
-  }
-
-  // TODO: use this for retargeting - do we need this?
-  pub fn publish_raw(&mut self, data: &[u8]) -> Result<()> {
-    if !self.data_ack_sem.try_wait(Some(5))? {
-      bail!("Publish timed out");
-    }
-
-    {
-      Log::get("MetadataPublisher::publish_raw").trace(format!("Publishing data: {data:?}"));
-
-      let mem = self.shm.borrow_ptr_mut()?;
-      {
-        let dest = (*mem).cast::<c_void>();
-        let src = data.as_ptr().cast::<c_void>();
-        unsafe {
-          // SAFETY: allocation of self.shm (mainly the size)
-          // + performing unaligned write here just to be sure
-          mempcpy(dest, src, data.len());
-        }
-      }
-    }
-    self.data_rdy_sem.try_post()
   }
 }
 

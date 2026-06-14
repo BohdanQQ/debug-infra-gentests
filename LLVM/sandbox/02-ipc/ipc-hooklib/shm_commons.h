@@ -38,7 +38,7 @@ typedef struct ShmMeta {
   // multiple times
   unsigned int forked;
   // number of tests to be performed (number of forks to perform)
-  // or (if mode == 3 - MT support), the index of the packet to be requested from the llcap-server
+  // or (if mode == 3/4/5 - MT support/checkpointing), the index of the packet to be requested from the llcap-server
   unsigned int test_count;
   // the number of the call of the target function to instrument
   // utitlized by decrementing this value on each call -> equality to 1
@@ -50,7 +50,7 @@ typedef struct ShmMeta {
   unsigned int thread_count;
   // logical ID of the thread to be tested
   unsigned int target_thread_lid;
-  const char checkpoint_dump_dir[CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO];
+  char checkpoint_dump_dir[CRIU_CHECKPOINT_DIR_PATH_MAXLEN_WZERO];
   unsigned long long checkpoint_id;
   // 0 - false
   // nonzero - true

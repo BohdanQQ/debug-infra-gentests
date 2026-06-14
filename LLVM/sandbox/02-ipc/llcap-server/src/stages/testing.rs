@@ -587,8 +587,8 @@ pub async fn singular_test_job(
   let mut cmd = cmd_from_args(cmdline)
     .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
   if let Some(output_gen) = output_gen.as_ref() {
-    let out_path = output_gen.get_out_path(test);
-    let err_path = output_gen.get_err_path(test);
+    let out_path = output_gen.get_out_path(test, "");
+    let err_path = output_gen.get_err_path(test, "");
     cmd.stdout(Stdio::from(File::create(out_path.clone()).map_err(
       |e| {
         mk_error(
@@ -630,76 +630,239 @@ pub async fn singular_test_job(
   }
 }
 
-pub async fn singular_restore_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  infra_params: InfraParams,
-  test: &TestRegisryItem,
-  output_gen: Arc<TestOutputPathGen>,
-  restore_path: &str,            // restore from where
-  checkpoint_path: Option<&str>, // checkpoint if applicable
-) -> Result<TestStatus, TestJobFailure> {
-  output_gen
-    .reload_before_restore(test)
-    .map_err(|e| TestJobFailure::from_test(test, format!("Failed to restore {e}"), None))?;
-
-  // lambda transforming the test errors to proper return values
-  let mk_error = |error: anyhow::Error, status: TestStatus| {
-    TestJobFailure::from_test(test, error.to_string(), Some(status))
-  };
-  let lg = Log::get("singular_restore_job");
-  // prepare job parameters
-  let restore_path = {
-    lg.trace(format!("Test: {test:?}"));
-
-    let mut guard = metadata_svr.lock().unwrap();
-    guard.re_new().map_err(|v| {
-      TestJobFailure::from_test(
+impl CheckpointedTesting {
+  pub async fn singular_restore_job(
+    &self,
+    metadata_svr: Arc<Mutex<MetadataPublisher>>,
+    test: &TestRegisryItem,
+    restore_path: &str,            // restore from where
+    checkpoint_path: Option<&str>, // checkpoint if applicable
+  ) -> Result<TestStatus, TestJobFailure> {
+    let infra_params = self.common.params.infra;
+    let output_gen = &self.output_generator;
+    let paths = self
+      .last_checkpoint_paths
+      .as_ref()
+      .ok_or(TestJobFailure::from_test(
         test,
-        v.to_string(),
-        TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
+        "Checkpoint was not done before the test",
+        None,
+      ))?;
+    output_gen
+      .reload_before_restore(paths)
+      .map_err(|e| TestJobFailure::from_test(test, format!("Failed to restore {e}"), None))?;
+
+    // lambda transforming the test errors to proper return values
+    let mk_error = |error: anyhow::Error, status: TestStatus| {
+      TestJobFailure::from_test(test, error.to_string(), Some(status))
+    };
+    let lg = Log::get("singular_restore_job");
+    // prepare job parameters
+    let restore_path = {
+      let mut guard = metadata_svr.lock().unwrap();
+      guard.re_new().map_err(|v| {
+        TestJobFailure::from_test(
+          test,
+          v.to_string(),
+          TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
+        )
+      })?;
+      lg.trace(format!("Test: {test:?}"));
+
+      send_test_metadata(&mut guard, infra_params, test, checkpoint_path)
+        .map_err(|e| mk_error(e, TestStatus::Timeout))?;
+      restore_path.to_string()
+    };
+
+    lg.info(format!("Restoring from {restore_path}"));
+    // prepare the "command", mainly the std out/err
+    let mut cmd = cmd_from_args(&["criu", "restore", "-D", &restore_path])
+      .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
+    // TODO: uncomment
+    // cmd
+    //   .stderr(Stdio::null())
+    //   .stdin(Stdio::null())
+    //   .stdout(Stdio::null());
+
+    // TODO: what?
+    // the below is false, FIXME -> use real paths
+    // the reason for those is the need to create an independent process
+    // so that CRIU can restore later
+    // descriptors are not created - they are created by CRIU
+
+    // launch the restore
+    let test_process = cmd.spawn().map_err(|e| {
+      mk_error(
+        anyhow!("spawn restore from command: {e}"),
+        TestStatus::Fatal("Spawn".to_owned()),
       )
     })?;
-    send_test_metadata(&mut guard, infra_params, test, checkpoint_path)
-      .map_err(|e| mk_error(e, TestStatus::Timeout))?;
-    restore_path.to_string()
-  };
 
-  // prepare the "command", mainly the std out/err
-  let mut cmd = cmd_from_args(&["criu", "restore", "-D", &restore_path])
-    .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
-  cmd
-    .stderr(Stdio::null())
-    .stdin(Stdio::null())
-    .stdout(Stdio::null());
+    lg.info(format!(
+      "PID of the restored program: {:?}",
+      test_process.id()
+    ));
 
-  // the below is false, FIXME -> use real paths
-  // the reason for those is the need to create an independent process
-  // so that CRIU can restore later
-  // descriptors are not created - they are created by CRIU
+    let result = wait_or_terminate(test_process, test).await;
 
-  // launch the restore
-  let test_process = cmd.spawn().map_err(|e| {
-    mk_error(
-      anyhow!("spawn restore from command: {e}"),
-      TestStatus::Fatal("Spawn".to_owned()),
-    )
-  })?;
+    sleep(Duration::from_millis(300)).await;
+    lg.trace(format!("final status: {result:?}"));
+    output_gen
+      .persist_after_restore(test, paths)
+      .map_err(|e| TestJobFailure::from_test(test, format!("Failed to persist {e}"), None))?;
 
-  lg.progress(format!(
-    "PID of the restored program: {:?}",
-    test_process.id()
-  ));
-
-  let result = wait_or_terminate(test_process, test).await;
-
-  sleep(Duration::from_millis(300)).await;
-  lg.trace(format!("final status: {result:?}"));
-
-  match &result {
-    TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
-      Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
+    match &result {
+      TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
+        Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
+      }
+      _ => Ok(result),
     }
-    _ => Ok(result),
+  }
+
+  fn get_criu_path(
+    &self,
+    i: &CRIUCheckpointIndex,
+    test_for_err: &TestRegisryItem,
+  ) -> std::result::Result<String, TestJobFailure> {
+    Ok(
+      self
+        .output_generator
+        .get_criu_dump(i.0)
+        .map_err(|e| {
+          TestJobFailure::from_test(
+            test_for_err,
+            format!("{e}"),
+            TestStatus::Fatal("Invalid checkpoint dir path".to_owned()).into(),
+          )
+        })?
+        .to_string_lossy()
+        .to_string(),
+    )
+  }
+
+  // starts a checkpointing job
+  pub async fn singular_checkpointing_job(
+    &self,
+    metadata_svr: Arc<Mutex<MetadataPublisher>>,
+    test: &TestRegisryItem,
+    mode: CheckpointJobMode<'_>,
+  ) -> Result<TestStatus, TestJobFailure> {
+    // either we're starting execution or we are restoring and running up until the next checkpoint
+    let do_checkpoint = match test.mode {
+      stages::test_registry::TestingMode::Testing
+      | stages::test_registry::TestingMode::MTCompatTesting => {
+        return Err(TestJobFailure::from_test(
+          test,
+          "invalid test mode for checkpoint".to_owned(),
+          None,
+        ));
+      }
+      stages::test_registry::TestingMode::CheckpointedTesting(do_checkpoint) => do_checkpoint,
+    };
+    if !do_checkpoint {
+      return Err(TestJobFailure::from_test(
+        test,
+        "invalid test: expected do_checkpoint to be true".to_owned(),
+        None,
+      ));
+    }
+    let lg = Log::get("singular_checkpointing_job");
+    // lambda transforming the test errors to proper return values
+    let mk_error = |error: anyhow::Error, status: TestStatus| {
+      TestJobFailure::from_test(test, error.to_string(), Some(status))
+    };
+
+    match mode {
+      CheckpointJobMode::Restore(idx) => {
+        let checkpoint_path = self.get_criu_path(&CRIUCheckpointIndex(idx), test)?;
+        // must perform restoration based on the previous index
+        let previous_cpoint_path = self.get_criu_path(&CRIUCheckpointIndex(idx - 1), test)?;
+        // restore job from a checkpoint path with specific parameters
+        self
+          .singular_restore_job(
+            metadata_svr,
+            test,
+            &previous_cpoint_path,
+            Some(&checkpoint_path),
+          )
+          .await
+      }
+      CheckpointJobMode::New(cmd, idx) => {
+        let checkpoint_path = self.get_criu_path(&CRIUCheckpointIndex(idx), test)?;
+        // performing a new checkpoint
+        // prepare job parameters
+        {
+          lg.trace(format!("Checkpoint new Test: {test:?}"));
+
+          let mut guard = metadata_svr.lock().unwrap();
+          guard.re_new().map_err(|v| {
+            TestJobFailure::from_test(
+              test,
+              v.to_string(),
+              TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
+            )
+          })?;
+          send_test_metadata(
+            &mut guard,
+            self.common.params.infra,
+            test,
+            Some(&checkpoint_path),
+          )
+          .map_err(|e| mk_error(e, TestStatus::Timeout))?;
+        };
+
+        // prepare the "command", mainly the std out/err
+        let mut cmd = cmd_from_args(cmd)
+          .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
+        let out_path = self.output_generator.get_out_path(test, "");
+        let err_path = self.output_generator.get_err_path(test, "");
+        lg.trace(format!(
+          "Job {test:?}\n\toutputs: {}, {}",
+          out_path.display(),
+          err_path.display()
+        ));
+        cmd
+          .stdin(Stdio::null())
+          .stdout(Stdio::from(File::create(out_path.clone()).map_err(
+            |e| {
+              mk_error(
+                anyhow!("Stdout file creation failed: {e} {}", out_path.display()),
+                TestStatus::Fatal("Stdout create".to_owned()),
+              )
+            },
+          )?))
+          .stderr(Stdio::from(File::create(err_path).map_err(|e| {
+            mk_error(
+              anyhow!("Stderr file creation failed {e} {}", out_path.display()),
+              TestStatus::Fatal("Stderr create".to_owned()),
+            )
+          })?));
+
+        let test_process = cmd.spawn().map_err(|e| {
+          mk_error(
+            anyhow!("spawn checkpoint from command: {e}"),
+            TestStatus::Fatal("Spawn".to_owned()),
+          )
+        })?;
+
+        lg.progress(format!(
+          "PID of the checkpointed program: {:?}",
+          test_process.id()
+        ));
+
+        let result = wait_or_terminate(test_process, test).await;
+
+        sleep(Duration::from_millis(300)).await;
+
+        lg.trace(format!("final status: {result:?}"));
+        match &result {
+          TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
+            Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
+          }
+          _ => Ok(result),
+        }
+      }
+    }
   }
 }
 
@@ -712,148 +875,6 @@ pub enum CheckpointJobMode<'a> {
 }
 
 struct CRIUCheckpointIndex(usize);
-
-fn get_criu_path(
-  i: &CRIUCheckpointIndex,
-  output_gen: &Arc<TestOutputPathGen>,
-  test_for_err: &TestRegisryItem,
-) -> std::result::Result<String, TestJobFailure> {
-  Ok(
-    output_gen
-      .get_criu_dump(i.0)
-      .map_err(|e| {
-        TestJobFailure::from_test(
-          test_for_err,
-          format!("{e}"),
-          TestStatus::Fatal("Invalid checkpoint dir path".to_owned()).into(),
-        )
-      })?
-      .to_string_lossy()
-      .to_string(),
-  )
-}
-
-// starts a checkpointing job
-pub async fn singular_checkpointing_job(
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  infra_params: InfraParams,
-  test: &TestRegisryItem,
-  output_gen: Arc<TestOutputPathGen>,
-  mode: CheckpointJobMode<'_>,
-) -> Result<TestStatus, TestJobFailure> {
-  // either we're starting execution or we are restoring and running up until the next checkpoint
-  let do_checkpoint = match test.mode {
-    stages::test_registry::TestingMode::Testing
-    | stages::test_registry::TestingMode::MTCompatTesting => {
-      return Err(TestJobFailure::from_test(
-        test,
-        "invalid test mode for checkpoint".to_owned(),
-        None,
-      ));
-    }
-    stages::test_registry::TestingMode::CheckpointedTesting(do_checkpoint) => do_checkpoint,
-  };
-  if !do_checkpoint {
-    return Err(TestJobFailure::from_test(
-      test,
-      "invalid test: expected do_checkpoint to be true".to_owned(),
-      None,
-    ));
-  }
-  let lg = Log::get("singular_checkpointing_job");
-  // lambda transforming the test errors to proper return values
-  let mk_error = |error: anyhow::Error, status: TestStatus| {
-    TestJobFailure::from_test(test, error.to_string(), Some(status))
-  };
-
-  match mode {
-    CheckpointJobMode::Restore(idx) => {
-      let checkpoint_path = get_criu_path(&CRIUCheckpointIndex(idx), &output_gen, test)?;
-      // must perform restoration based on the previous index
-      let previous_cpoint_path = get_criu_path(&CRIUCheckpointIndex(idx - 1), &output_gen, test)?;
-      // restore job from a checkpoint path with specific parameters
-      singular_restore_job(
-        metadata_svr,
-        infra_params,
-        test,
-        output_gen,
-        &previous_cpoint_path,
-        Some(&checkpoint_path),
-      )
-      .await
-    }
-    CheckpointJobMode::New(cmd, idx) => {
-      let checkpoint_path = get_criu_path(&CRIUCheckpointIndex(idx), &output_gen, test)?;
-      // performing a new checkpoint
-      // prepare job parameters
-      {
-        lg.trace(format!("Test: {test:?}"));
-
-        let mut guard = metadata_svr.lock().unwrap();
-        guard.re_new().map_err(|v| {
-          TestJobFailure::from_test(
-            test,
-            v.to_string(),
-            TestStatus::Fatal("Failed to re-new semaphores".to_owned()).into(),
-          )
-        })?;
-        send_test_metadata(&mut guard, infra_params, test, Some(&checkpoint_path))
-          .map_err(|e| mk_error(e, TestStatus::Timeout))?;
-      };
-
-      // prepare the "command", mainly the std out/err
-      let mut cmd = cmd_from_args(cmd)
-        .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
-      let out_path = output_gen.get_out_path(test);
-      let err_path = output_gen.get_err_path(test);
-      lg.trace(format!(
-        "Job {test:?} outputs: {}, {}",
-        out_path.display(),
-        err_path.display()
-      ));
-      cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(File::create(out_path.clone()).map_err(
-          |e| {
-            mk_error(
-              anyhow!("Stdout file creation failed: {e} {}", out_path.display()),
-              TestStatus::Fatal("Stdout create".to_owned()),
-            )
-          },
-        )?))
-        .stderr(Stdio::from(File::create(err_path).map_err(|e| {
-          mk_error(
-            anyhow!("Stderr file creation failed {e} {}", out_path.display()),
-            TestStatus::Fatal("Stderr create".to_owned()),
-          )
-        })?));
-
-      let test_process = cmd.spawn().map_err(|e| {
-        mk_error(
-          anyhow!("spawn checkpoint from command: {e}"),
-          TestStatus::Fatal("Spawn".to_owned()),
-        )
-      })?;
-
-      lg.progress(format!(
-        "PID of the checkpointed program: {:?}",
-        test_process.id()
-      ));
-
-      let result = wait_or_terminate(test_process, test).await;
-
-      sleep(Duration::from_millis(300)).await;
-
-      lg.trace(format!("final status: {result:?}"));
-      match &result {
-        TestStatus::Fatal(m) | TestStatus::Spurious(m) => {
-          Err(TestJobFailure::from_test(test, m.clone(), Some(result)))
-        }
-        _ => Ok(result),
-      }
-    }
-  }
-}
 
 /// waits for or terminates the test instance (child process representing the entire test process) based on a timeout
 async fn wait_or_terminate(mut process: Child, test: &TestRegisryItem) -> TestStatus {
@@ -955,21 +976,23 @@ impl TestOutputPathGen {
       .map(|()| path)
   }
 
-  pub fn get_out_path(&self, tst: &TestRegisryItem) -> PathBuf {
+  pub fn get_out_path(&self, tst: &TestRegisryItem, suffix: &str) -> PathBuf {
     self.get_path(format!(
-      "M{}-F{}-{}.out",
+      "M{}-F{}-{}{}.out",
       tst.uid.module_id.hex_string(),
       tst.uid.function_id.hex_string(),
-      tst.id()
+      tst.id(),
+      suffix
     ))
   }
 
-  pub fn get_err_path(&self, tst: &TestRegisryItem) -> PathBuf {
+  pub fn get_err_path(&self, tst: &TestRegisryItem, suffix: &str) -> PathBuf {
     self.get_path(format!(
-      "M{}-F{}-{}.err",
+      "M{}-F{}-{}{}.err",
       tst.uid.module_id.hex_string(),
       tst.uid.function_id.hex_string(),
-      tst.id()
+      tst.id(),
+      suffix
     ))
   }
 
@@ -983,32 +1006,64 @@ impl TestOutputPathGen {
 
   /// Stores stdout/err to temporary locations after a checkpoint.
   /// The temporary copy is needed for the restoration done later
-  pub fn store_after_checkpoint(&self, tst: &TestRegisryItem) -> Result<()> {
-    let from_out = self.get_out_path(tst);
-    let from_err = self.get_err_path(tst);
+  /// Returns (out, err) temporary paths used for restoring
+  pub fn store_after_checkpoint(
+    &self,
+    tst: &TestRegisryItem,
+    paths: Option<&CheckpointPaths>,
+  ) -> Result<CheckpointPaths> {
+    let from_out = self.get_out_path(tst, "");
+    let from_out_per = self.get_out_path(tst, "-per");
+    let from_err = self.get_err_path(tst, "");
+    let from_err_per = self.get_err_path(tst, "-per");
     ensure!(from_out.file_name().is_some() && from_err.file_name().is_some());
     let temp_out = self.tmp_dir.join(from_out.file_name().unwrap());
     let temp_err = self.tmp_dir.join(from_err.file_name().unwrap());
 
-    std::fs::copy(from_out, temp_out).map_err(|e| anyhow!("Checkpoint copy, out: {e}"))?;
-    std::fs::copy(from_err, temp_err).map_err(|e| anyhow!("Checkpoint copy, err: {e}"))?;
-    Ok(())
+    // when checkpointing from a restored program, the paths have the -per suffix
+    let expected_out = if std::fs::copy(&from_out, &temp_out).is_ok() {
+      // this is the very first path, all restored programs use this SINGLE path for their outputs
+      // - we are merely replacing it in between runs and restoring it before runs
+      Some(from_out)
+    } else {
+      std::fs::copy(&from_out_per, &temp_out).map_err(|e| anyhow!("Checkpoint copy, out: {e}"))?;
+      // if in the -per path -> we have done 2nd, 3rd, ... etc checkpoint, this path is useless
+      // - we are only keeping the copy in the temporary path (for copying into the Some(from_out))
+      None
+    };
+    let expected_err = if std::fs::copy(&from_err, &temp_err).is_ok() {
+      Some(from_err)
+    } else {
+      std::fs::copy(&from_err_per, &temp_err).map_err(|e| anyhow!("Checkpoint copy, err: {e}"))?;
+      None
+    };
+
+    Ok(CheckpointPaths {
+      criu_expected: match paths {
+        Some(x) => x.criu_expected.clone(),
+        None => match (expected_out, expected_err) {
+          (Some(x), Some(y)) => (x, y),
+          _ => bail!("bug"),
+        },
+      },
+      originals: (temp_out, temp_err),
+    })
   }
 
   /// Reloads temporarily stored stdout/err of a test job to allow the restoration to go through.
-  pub fn reload_before_restore(&self, tst: &TestRegisryItem) -> Result<()> {
-    let renew_out = self.get_out_path(tst);
-    let renew_err = self.get_err_path(tst);
-    ensure!(renew_out.file_name().is_some() && renew_err.file_name().is_some());
-    let temp_out = self.tmp_dir.join(renew_out.file_name().unwrap());
-    let temp_err = self.tmp_dir.join(renew_err.file_name().unwrap());
+  pub fn reload_before_restore(&self, previous_paths: &CheckpointPaths) -> Result<()> {
+    previous_paths.restore()
+  }
 
-    std::fs::copy(&temp_out, &renew_out).map_err(|e| {
-      anyhow!("Checkpoint restore, out: {e}, from: {temp_out:?}, to: {renew_out:?}")
-    })?;
-    std::fs::copy(&temp_err, &renew_err)
-      .map_err(|e| anyhow!("Checkpoint restore, err {e}, from: {temp_err:?}, to: {renew_err:?}"))?;
-    Ok(())
+  pub fn persist_after_restore(
+    &self,
+    tst: &TestRegisryItem,
+    previous_paths: &CheckpointPaths,
+  ) -> Result<()> {
+    let out = self.get_out_path(tst, "-per");
+    let err = self.get_err_path(tst, "-per");
+    ensure!(out.file_name().is_some() && err.file_name().is_some());
+    previous_paths.persist(&out, &err)
   }
 }
 
@@ -1321,9 +1376,44 @@ enum CheckpointState {
   End,
 }
 
+#[derive(Debug)]
+pub struct CheckpointPaths {
+  originals: (PathBuf, PathBuf),
+  // criu expects the original files on these paths
+  criu_expected: (PathBuf, PathBuf),
+}
+
+impl CheckpointPaths {
+  pub fn restore(&self) -> Result<()> {
+    for (frm, to) in [
+      (&self.originals.0, &self.criu_expected.0),
+      (&self.originals.1, &self.criu_expected.1),
+    ] {
+      let lg = Log::get("output_restore");
+      lg.trace(format!("{frm:?} -> {to:?}"));
+      std::fs::copy(frm, to)
+        .map_err(|e| anyhow!("Checkpoint restore, out: {e}, from: {frm:?}, to: {to:?}"))?;
+    }
+
+    Ok(())
+  }
+
+  pub fn persist(&self, out: &Path, err: &Path) -> Result<()> {
+    for (frm, to) in [(&self.criu_expected.0, out), (&self.criu_expected.1, err)] {
+      let lg = Log::get("output_persist");
+      lg.trace(format!("{frm:?} -> {to:?}"));
+      std::fs::copy(frm, to)
+        .map_err(|e| anyhow!("Persist, out: {e}, from: {frm:?}, to: {to:?}"))?;
+    }
+
+    Ok(())
+  }
+}
+
 pub struct CheckpointedTesting {
   common: CommonTestingPhaseStore,
   last_checkpoint: CheckpointState,
+  last_checkpoint_paths: Option<CheckpointPaths>,
   output_generator: Arc<TestOutputPathGen>,
   // test item & the command line
   // presence (as a whole)           => Perform checkpoint
@@ -1345,6 +1435,7 @@ impl CheckpointedTesting {
       checkpointing_testcase: None,
       output_generator: out_gen,
       total_call_count: call_count,
+      last_checkpoint_paths: None,
     }
   }
   fn make_checkpointing_case(
@@ -1447,26 +1538,39 @@ impl TestingPhase for CheckpointedTesting {
     let thread_lid = tc.0.thread_lid;
     // if checkpoint restore takes place, be sure to skip the right amount of calls
     let skip = tc.0.call_index.0;
-    let call_count: u64 = thread_counts[usize::try_from(thread_lid.0)?];
-
-    for call_index in (0..call_count).skip(skip as usize) {
-      for packet_index in 0..test_count {
-        tests.push(self.common.test_registry.add_new_test(
-          TestRegisryItem {
-            uid,
-            call_index: CallIndexT(u32::try_from(call_index)?),
-            packet_index: PacketIndexT(packet_index.into()),
-            thread_lid,
-            thread_count: u32::try_from(thread_counts.len())?,
-            test_count,
-            timeout_test,
-            timeout_process: Some(timeout_test),
-            mode: stages::test_registry::TestingMode::MTCompatTesting,
-          },
-          command,
-        ));
-      }
+    if usize::try_from(skip)? == self.total_call_count {
+      return STOP;
     }
+
+    for packet_index in 0..test_count {
+      tests.push(self.common.test_registry.add_new_test(
+        TestRegisryItem {
+          uid,
+          call_index: CallIndexT(skip),
+          packet_index: PacketIndexT(packet_index.into()),
+          thread_lid,
+          thread_count: u32::try_from(thread_counts.len())?,
+          test_count,
+          timeout_test,
+          timeout_process: Some(timeout_test),
+          mode: stages::test_registry::TestingMode::MTCompatTesting,
+        },
+        command,
+      ));
+    }
+
+    // prepare for the next round
+    self.last_checkpoint = match self.last_checkpoint {
+      CheckpointState::Init => CheckpointState::Checkpoint(1),
+      CheckpointState::Checkpoint(i) => {
+        if usize::try_from(i)? >= self.total_call_count {
+          CheckpointState::End
+        } else {
+          CheckpointState::Checkpoint(i + 1)
+        }
+      }
+      CheckpointState::End => self.last_checkpoint,
+    };
     Ok(true)
   }
 
@@ -1490,16 +1594,8 @@ impl TestingPhase for CheckpointedTesting {
         |cmdline| CheckpointJobMode::New(cmdline, tst.call_index.0 as usize),
       );
 
-      lg.trace(format!(
-        "Starting checkpointing process in mode {checkpoint_mode:?}"
-      ));
-      let test_job = singular_checkpointing_job(
-        meta.clone(),
-        self.common.params.infra,
-        tst,
-        self.output_generator.clone(),
-        checkpoint_mode,
-      );
+      lg.trace(format!("Starting checkpoint in mode {checkpoint_mode:?}"));
+      let test_job = self.singular_checkpointing_job(meta.clone(), tst, checkpoint_mode);
 
       let job_res = test_job.await;
       lg.trace(format!("Chekpoint finished in state {job_res:?}"));
@@ -1510,7 +1606,15 @@ impl TestingPhase for CheckpointedTesting {
         _ => (),
       }
 
-      self.output_generator.store_after_checkpoint(tst)?;
+      self.last_checkpoint_paths = Some(
+        self
+          .output_generator
+          .store_after_checkpoint(tst, self.last_checkpoint_paths.as_ref())?,
+      );
+      lg.trace(format!(
+        "Commited checkpoint paths: {:?}",
+        self.last_checkpoint_paths
+      ));
       tst.call_index.0
     };
 
@@ -1521,16 +1625,13 @@ impl TestingPhase for CheckpointedTesting {
     let test_reg = &self.common.test_registry;
     let mut errors: Vec<TestJobFailure> = vec![];
     let results: Arc<Mutex<Vec<LogResult>>> = Arc::new(Mutex::new(vec![]));
+    let lg = Log::get(&format!("run_tests<ChPnt>[{restoration_idx}]"));
     for test in &self.common.tests {
       let (tst, _) = test_reg
         .get_test_params(*test)
         .ok_or(anyhow!("Inconsistent test registry"))?;
       lg.trace(format!("Start test {tst:?}"));
-      let dump_path = get_criu_path(
-        &CRIUCheckpointIndex(restoration_idx as usize),
-        &self.output_generator,
-        tst,
-      );
+      let dump_path = self.get_criu_path(&CRIUCheckpointIndex(restoration_idx as usize), tst);
       let dump_path = match dump_path {
         Err(e) => {
           errors.push(e);
@@ -1539,14 +1640,7 @@ impl TestingPhase for CheckpointedTesting {
         Ok(v) => v,
       };
 
-      let test_job = singular_restore_job(
-        meta.clone(),
-        self.common.params.infra,
-        tst,
-        self.output_generator.clone(),
-        &dump_path,
-        None,
-      );
+      let test_job = self.singular_restore_job(meta.clone(), tst, &dump_path, None);
 
       match test_job.await {
         Err(e) => errors.push(e),
@@ -1567,17 +1661,6 @@ impl TestingPhase for CheckpointedTesting {
       }
     }
 
-    self.last_checkpoint = match self.last_checkpoint {
-      CheckpointState::Init => CheckpointState::Checkpoint(1),
-      CheckpointState::Checkpoint(i) => {
-        if usize::try_from(i)? >= self.total_call_count {
-          CheckpointState::End
-        } else {
-          CheckpointState::Checkpoint(i + 1)
-        }
-      }
-      CheckpointState::End => self.last_checkpoint,
-    };
     Ok((
       Arc::try_unwrap(results)
         .map_err(|_| anyhow!("Failed to free results out of Arc"))?

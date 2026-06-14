@@ -20,6 +20,7 @@
 #include <iostream>
 #include <mutex>
 #include <ostream>
+#include <print>
 #include <ranges>
 #include <string>
 #include <string_view>
@@ -33,7 +34,6 @@
 #include <unistd.h>
 #include <utility>
 #include <vector>
-#include <print>
 
 #define ENDPASS_CODE 231
 
@@ -77,7 +77,7 @@ static bool connect_to_server(const char *path) {
   auto len = static_cast<socklen_t>(
       strnlen(static_cast<char *>(remote.sun_path), SUN_PATH_MAX_LEN) +
       sizeof(remote.sun_family));
-  auto* sockaddr = start_lifetime_as<struct sockaddr>(&remote);
+  auto *sockaddr = start_lifetime_as<struct sockaddr>(&remote);
   if (connect(s_server_socket, sockaddr, len) == -1) {
     perror("Failed to connect\n");
     return false;
@@ -136,8 +136,8 @@ static void copy_into(std::array<char, OutSz> &target, InS... vals) {
 }
 
 // creates a compile-time-checked "mesasge" (bytes) of certain size.
-// The compile time checks ensure that the vals do in fact fit into the OutSz size
-// of the returned message (via sizeof)
+// The compile time checks ensure that the vals do in fact fit into the OutSz
+// size of the returned message (via sizeof)
 template <size_t OutSz, typename... InS>
 static Arr<char, OutSz> make_message(InS... vals) {
   Arr<char, OutSz> result{'\0'};
@@ -158,8 +158,6 @@ static T take_into(const std::array<char, InS> &in) {
   std::ranges::copy(in | std::views::take(sizeof(T)), tArr.begin());
   return std::bit_cast<T>(tArr);
 }
-
-// TODO: index in checkpointing mode... ignore and force response on the llcap-server?
 
 // regardless of return type, the target must be freed by caller
 static bool request_packet_from_server(uint64_t index, void **target,
@@ -397,33 +395,40 @@ static EMsgEnd serve_for_other_until_end(int test_requests_socket, pid_t pid,
 // sets up the server connection
 static void pre_test_setup(uint32_t module_id, uint32_t function_id,
                            uint32_t call_idx) {
+  std::cout << "bef" << std::endl;
   if (shall_perform_checkpoint()) {
+    std::cout << "chkpoint" << std::endl;
     if (!perform_checkpoint()) {
       std::cerr << "Failed to restore/checkpoint" << std::endl;
       std::exit(HOOKLIB_EC_CHCKPNT);
+    }
+    std::cout << "restored" << std::endl;
+    if (!should_hijack_arg()) {
+      std::cout << "runtime retarget - back off 1/2" << std::endl;
+      return;
     }
   }
   // we shall end up here after a restoration
   // -> since restore is performed by the llcap-server, we can expect that
   // "everything is the same" and we can just connect to the llcap-server
   // "normally"
-
+  std::cout << "c" << std::endl;
   if (!connect_to_server(TEST_SERVER_SOCKET_NAME)) {
     std::cerr << "Failed to connect" << std::endl;
     std::exit(HOOKLIB_EC_CONN);
   }
-
+  std::cout << "d" << std::endl;
   if (!send_start_msg(module_id, function_id, call_idx)) {
     std::cerr << "Failed send start message" << std::endl;
     std::exit(HOOKLIB_EC_START);
   }
 }
 
-// testing mode-related decisions must be made exclusively when running in MT-environment
-// due to the checkpointing nature:
-// if a restore happens "from a thread (TX)" and a different thread (TZ) would access the
-// testing mode before TX can "retarget it", we could lose non-zero testing calls purely
-// due to this mis-timed decision
+// testing mode-related decisions must be made exclusively when running in
+// MT-environment due to the checkpointing nature: if a restore happens "from a
+// thread (TX)" and a different thread (TZ) would access the testing mode before
+// TX can "retarget it", we could lose non-zero testing calls purely due to this
+// mis-timed decision
 static std::mutex s_testing_mode_retarget_mutex;
 
 // sets up the testing environment for the MT support mode testing
@@ -432,14 +437,13 @@ static void multithread_test_setup() {
   uint32_t packet_size = 0;
   // the index we'll be fetching from the llcap-server
   auto idx = arg_pkt_index_to_fetch();
-
+  std::println(std::cerr, "Packet request with idx {}", idx);
   if (!request_packet_from_server(idx, &packet_ptr, &packet_size)) {
-    std::cerr << std::format(
-                     "Packet request failed with idx {0}, received size {1}",
-                     idx, packet_size)
+    std::cerr << std::format("Packet request failed with idx {}", idx)
               << std::endl;
     std::exit(HOOKLIB_EC_RECV_PKT);
   }
+  std::println(std::cerr, "Packet idx {} size {}", idx, packet_size);
 
   if (packet_ptr == nullptr || !locally_initialize_arg_packet(
                                    packet_ptr, static_cast<int>(packet_size))) {
@@ -454,9 +458,16 @@ static void multithread_test_setup() {
 static void perform_testing(uint32_t module_id, uint32_t function_id,
                             uint32_t call_idx) {
   // *_setup functions terminate the program on failure
-
+  std::cout << "a" << std::endl;
   pre_test_setup(module_id, function_id, call_idx);
-
+  // the above call could have performed a test retarget -> additional check
+  if (!should_hijack_arg()) {
+    // de/serializers use should_hijack_arg as well -> no way argument replacement 
+    // is attempted after retarget that passes here 
+    std::cout << "Runtime retarget detected, backing off" << std::endl;
+    return;
+  }
+  std::cout << "e" << std::endl;
   set_fork_flag(); // setting the flag in both parent and the fork should not
                    // matter, this function never returns in the fork's parent
                    // (test coordinator)
@@ -464,10 +475,12 @@ static void perform_testing(uint32_t module_id, uint32_t function_id,
                    // but the behavior should remain the same (call counts, ...)
 
   if (mt_compat_testing()) {
-    multithread_test_setup(); 
+    multithread_test_setup();
     // go back and hijack arguments
+    std::cout << "f" << std::endl;
     return;
   }
+  std::cout << "x" << std::endl;
 
   for (uint32_t test_idx = 0; test_idx < test_count(); ++test_idx) {
     std::array<int, 2> sockets{0};
@@ -555,7 +568,7 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
     // the rest of this function concerns only the testing mode
     return;
   }
-  
+
   std::unique_lock<std::mutex> guard;
   bool locked{false};
   if (performs_retarget()) {
@@ -563,12 +576,14 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
       std::cerr << "Locking..." << std::endl;
     }
     // locks this section as a retarget might happen
-    // read more at s_testing_mode_retarget_mutex 
+    // read more at s_testing_mode_retarget_mutex
     guard = std::unique_lock{s_testing_mode_retarget_mutex};
+    std::cerr << "DONE Locking..." << std::endl;
     locked = true;
     // note that performs_retarget is only true for when checkpointing happens
-    // this means that perform_testing returns (in checkpointing mode testing phase does not fork)
-    // and this lock will thus be unlocked by leaving the scope or terminating
+    // this means that perform_testing returns (in checkpointing mode testing
+    // phase does not fork) and this lock will thus be unlocked by leaving the
+    // scope or terminating
   }
 
   // in testing mode we discriminate based on the function that is under the
@@ -581,8 +596,10 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
 
     // should_hijack_arg becomes true as soon as the coutner updated above
     // indicates that we "should instrument this call"
+    std::cout << "should_hijack_arg " << should_hijack_arg() << std::endl;
     if (should_hijack_arg()) {
       perform_testing(module_id, fn_id, get_call_num());
+      std::cout << "lock" << locked << std::endl;
       // PARENT process never returns from the first call to instrumented
       // function CHILD process simply continues execution, should_hijack_arg is
       // used further in the type-hijacking functions
@@ -592,6 +609,7 @@ void hook_arg_preamble(uint32_t module_id, uint32_t fn_id) {
   if (locked) {
     std::println("unlocking retarget mtx");
   }
+  std::cerr << "done done" << std::endl;
 }
 
 void hook_arg_epilogue(uint32_t module_id, uint32_t fn_id) {
@@ -633,10 +651,12 @@ int32_t hook_test_is_executing(uint32_t module_id, uint32_t fn_id) {
 static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
                                     bool exception) {
   if (0 == hook_test_is_executing(module_id, fn_id)) {
+    std::cerr << "NOTEXEC" << std::endl;
     return;
   }
 
   if (mt_compat_testing()) {
+    std::cerr << "MT" << std::endl;
     // status sent as -1 - the status will not be inspected because if code
     // reaches here, we are finishing via instrumented code (this function) in
     // other words, if the program fails, execution will not reach here and
@@ -649,6 +669,7 @@ static void hook_test_epilogue_impl(uint32_t module_id, uint32_t fn_id,
 
     // the ENDPASS_CODE is needed only for the forking testing mode (we already
     // sent it via the send_test_end_message)
+    std::cout << "EPILOGUE 0" << std::endl;
     std::exit(0);
   }
 
@@ -747,13 +768,17 @@ static void hook_t_deserialize(NumT *target) {
 template <class NumT, class StorageT>
   requires ConvertibleIsh<StorageT, NumT>
 static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
+  std::cerr << "-----in hook-----" << std::endl;
   if (in_testing_mode()) {
+    std::cerr << "-----in hook tes-----" << std::endl;
     if (!is_fn_under_test((module), (fn)) || !should_hijack_arg()) {
+      std::cerr << "-----in hook asgn-----" << std::endl;
       assign<NumT>(*(target), (n));
       return;
     }
 
     hook_t_deserialize<NumT, StorageT>(target);
+    std::cerr << "-----in hook end-----" << std::endl;
     return;
   }
   // register value into the static argument packet protobuf

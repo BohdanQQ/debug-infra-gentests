@@ -239,29 +239,22 @@ pub async fn testing_phase(
           };
           let output_gen = Arc::new(output_gen);
 
-          let mut p =
-            CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
-          // TODO: use run_test_case (either adapt it for next_batch or get rid of nxt_btch)
-          while Some(()) == p.next_batch() {
-            let has_tests = p.prepare_cases(
-              &command,
-              &PartialRegistryItem {
-                uid,
-                test_count,
-                test_case_timeout,
-                global_timeout,
-                thread_counts: thread_counts.clone(),
-              },
-            )?;
-            if !has_tests {
-              break;
-            }
-
-            let (oks, fails) = p.run_tests(metadata_svr.clone()).await?;
-            try_lock_anhw(&results)?.extend_from_slice(&oks);
-            errors.extend_from_slice(&fails);
-          }
-          Ok(())
+          let p = CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
+          run_test_case(
+            p,
+            command.clone(),
+            PartialRegistryItem {
+              uid,
+              test_count,
+              test_case_timeout,
+              global_timeout,
+              thread_counts: thread_counts.clone(),
+            },
+            metadata_svr.clone(),
+            results.clone(),
+            &mut errors,
+          )
+          .await
         }
       }?;
     }
