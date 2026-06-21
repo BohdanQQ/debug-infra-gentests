@@ -467,6 +467,7 @@ fn handle_client_msg(
   packets: &mut dyn PacketProvider,
   results: &Arc<Mutex<TestResults>>,
 ) -> Result<(ClientState, Option<Vec<u8>>)> {
+  let lg = Log::get("handle_client_msg");
   match state {
     ClientState::Init => match msg {
       TestMessage::Start(id, i) => Ok((ClientState::Started(id, i), None)),
@@ -475,21 +476,19 @@ fn handle_client_msg(
     },
     ClientState::Started(id, call_idx) => match msg {
       TestMessage::TestEnd(test_index, thread_lid, status) => {
-        Log::get("handle_client_msg").info(format!(
-          "test {id:?} ended: {status:?}, idx: {}",
-          test_index.0
-        ));
-        try_lock_anhw(results)?.push(LogResult {
+        let test_result = LogResult {
           uid: id,
           call: call_idx,
           pkt: test_index,
           status,
           thread_lid,
-        });
+        };
+        lg.info(format!("test ended: {test_result:?}"));
+        try_lock_anhw(results)?.push(test_result);
         Ok((state, None))
       }
       TestMessage::PacketRequest(idx) => {
-        Log::get("handle_client_msg").trace(format!("{msg:?}"));
+        lg.trace(format!("{msg:?}"));
         let response = packets.get_packet(id, usize::try_from(idx.0)?);
         Ok((state, response))
       }

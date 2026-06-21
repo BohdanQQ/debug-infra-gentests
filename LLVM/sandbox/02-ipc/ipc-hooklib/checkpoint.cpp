@@ -93,7 +93,7 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
     return err("invalid log path - system");
   }
   if constexpr (DBG) {
-    std::cerr << std::format("Configuring Checkpoint... dump dir: {}, criu socket path: {}, log id: {}", dumpDir, criuSockPath, logId) << std::endl;
+    std::cerr << std::format("Configuring Checkpoint\n\tdump dir: {}\n\tcriu socket path: {}\n\tlog id: {}", dumpDir, criuSockPath, logId) << std::endl;
   }
 
   criu_opts *opts = nullptr;

@@ -30,10 +30,10 @@ use stages::{
 use crate::{
   log::LogStrategy,
   modmap::NumFunUid,
-  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase, try_lock_anhw},
+  phase::{arg_capture_phase, calltrace_phase, mask_fn_selection, testing_phase},
   stages::{
     common::{CommonStageParams, read_thread_counts},
-    testing::{LogResult, PartialRegistryItem, TestJobFailure, TestStatus, TestingPhase},
+    testing::{LogResult, TestJobFailure, TestStatus},
   },
 };
 
@@ -310,29 +310,5 @@ async fn report_results(
     let _ = lg.result(&error.log_res).await;
   }
   lg.finish().await?;
-  Ok(())
-}
-
-async fn run_test_case(
-  mut test_phase: impl TestingPhase,
-  cmd: Arc<Vec<String>>,
-  template: PartialRegistryItem,
-  metadata_svr: Arc<Mutex<MetadataPublisher>>,
-  results: Arc<Mutex<Vec<LogResult>>>,
-  errors: &mut Vec<TestJobFailure>,
-) -> Result<()> {
-  while let Ok(v) = test_phase.prepare_cases(&cmd, &template) {
-    if !v {
-      break;
-    }
-    let (mut res, mut err) = test_phase.run_tests(Arc::clone(&metadata_svr)).await?;
-
-    try_lock_anhw(&results)?.append(&mut res);
-    errors.append(&mut err);
-
-    if test_phase.next_batch().is_none() {
-      break;
-    }
-  }
   Ok(())
 }

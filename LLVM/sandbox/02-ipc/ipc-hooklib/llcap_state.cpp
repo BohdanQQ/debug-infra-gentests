@@ -154,6 +154,11 @@ class CallCounter {
   std::vector<uint64_t> m_counts;
   // count-up vector (FIXME: can probably be just the count-up vector)
   std::vector<uint64_t> m_aux_counts;
+  // retarget helper that ensures proper call indicies are reported to llcap-server
+  // - the restoration from a checkpoint performs "retargetting"
+  // --> this fools the retargetted test to skip instrumentation of the upcoming call
+  // and perform testing at the call after the upcoming call
+  std::optional<uint32_t> m_reported_call_num;
 
 public:
   explicit CallCounter(std::vector<uint64_t> &&counts)
@@ -186,6 +191,9 @@ public:
 
   uint32_t get_call_num() {
     auto id = ensure_logical_id();
+    if (m_reported_call_num) {
+      return *m_reported_call_num;
+    }
     return static_cast<uint32_t>(s_buff_info.target_call_number + 1 -
                                  m_counts[id]);
   }
@@ -200,6 +208,10 @@ public:
     return is_lid_tested() && m_counts[id] == 1;
   }
 
+  void void_retarget_info_if_present() {
+    m_reported_call_num = std::nullopt;
+  }
+
   // adjusts the internal state after checkpoint_restore
   void retarget_after_restore(SRetargetInfo info) {
     s_buff_info.target_thread_lid = info.target_lid;
@@ -207,10 +219,14 @@ public:
       std::println(std::cerr, "warning: requested call number target won't be hit!");
     }
     m_counts[info.target_lid] = std::max(0ULL, info.new_target_call - m_aux_counts[info.target_lid] + 1);
+    m_reported_call_num = info.new_target_call;
     s_buff_info.mode = info.new_mode;
     s_buff_info.test_count = info.new_packet_index;
     std::memcpy(&s_buff_info.checkpoint_dump_dir[0], info.criu_path.data(), info.criu_path.size());
-    std::println(std::cerr, "Retargeted to\n\tmode {}\n\tindex {}\n\tnew tgt call {}\n\tcounts value {}\n", s_buff_info.mode, s_buff_info.test_count, info.new_target_call, m_counts[info.target_lid]);
+    
+    if constexpr (DBG) { 
+      std::println(std::cerr, "Retargeted to\n\tmode {}\n\tindex {}\n\tnew tgt call {}\n\tcounts value {}\n", s_buff_info.mode, s_buff_info.test_count, info.new_target_call, m_counts[info.target_lid]);
+    }
   }
 
   static bool is_lid_tested() {
@@ -308,7 +324,6 @@ static unsigned int test_mode() { return s_buff_info.mode; }
 
 bool performs_retarget() {
   const auto mode = test_mode();
-  std::cout << "Mode: " << mode << std::endl;
   return mode == MODE_CHECKPOINT_TESTING_DO_CHECKPOINT;
 }
 
@@ -335,25 +350,24 @@ bool perform_checkpoint() {
     std::println(std::cerr, "Unexpected mode");
     return false;
   }
+
+  s_call_countdown_instance->void_retarget_info_if_present();
   // normally, we would like to "deinitialize" every single shared resource
   // (e.g. the shared memory mapping)
   // but since checkpointing is a testing-only feature and we don't use
   // shared memory (after initialization) in the testing phase, we don't need to
   // do anything here
-  std::cerr << "Checkpoint into" << s_buff_info.checkpoint_dump_dir << std::endl;
   auto rv = performCheckpoint(s_buff_info.checkpoint_dump_dir,
                               s_buff_info.checkpoint_id, s_buff_info.shell_job != 0);
   if (!rv) {
     std::println(std::cerr, "Checkpoint failure: {}", rv.error());
     return false;
   }
-  std::cerr << "After checkpoint into" << s_buff_info.checkpoint_dump_dir << std::endl;
 
   // likewise, as we did not deinit anything, we don't need to reinit anything
   // server connection will be established as per our normal testing protocol
 
   if (*rv) {
-    std::cerr << "After restore by" << s_buff_info.checkpoint_dump_dir << std::endl;
     // we just need to retarget the test run if we have been restored from a checkpoint
     auto retarget_data = get_retarget_data();
     if (!retarget_data) {

@@ -4,7 +4,7 @@ pub mod hooklib_commons;
 pub mod mem_utils;
 use anyhow::{Result, anyhow, bail, ensure};
 use hooklib_commons::{META_MEM_NAME, META_MEM_SIZE_NAME, META_SEM_ACK, META_SEM_DATA, ShmMeta};
-use std::ffi::{self, CStr, c_void};
+use std::ffi::{self, CStr};
 use std::slice;
 
 use crate::libc_wrappers::fd::try_shm_unlink_fd;
@@ -21,7 +21,7 @@ use crate::shmem_capture::mem_utils::{ptr_add_nowrap, ptr_add_nowrap_mut};
 use crate::stages::common::InfraParams;
 use crate::stages::test_registry::{TestRegisryItem, TestingMode};
 use crate::stages::testing::test_server_socket;
-use libc::{O_CREAT, mempcpy};
+use libc::O_CREAT;
 
 /// a handle to all shared memory infrastructure necessary for function tracing (call tracing and argument capture)
 pub struct TracingInfra {
