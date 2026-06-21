@@ -53,6 +53,17 @@ function run-test-in-directory-custom-buffers-mt {
 }
 
 
+function run-test-in-dir-fnend-instr-criu {
+  TestDir=$1; shift;
+  TestedFnName=$1;shift;
+  Timeout=$1; shift;
+  LlcapBufSz=$1; shift
+  LlcapBufCnt=$1; shift
+  
+  run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "criu" -mllvm -llcap-instrument-fn-exit
+}
+
+
 function run-test-in-directory-fn-end-instr {
   TestDir=$1; shift;
   TestedFnName=$1;shift;
@@ -78,7 +89,15 @@ function run-smoke-tests-with-buffers {
   Size=$1; shift
   Count=$1; shift
 
-  # initial smokes consist of simple replacement instrumentation and timeouts (with C examples)
+  # CRIU support - basic
+  # these are first as the CRIU support sometimes makes tokio panic when waiting for a processs
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-simple" "test_target" 10 "$Size" "$Count"
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+  
+  # overhead demonstration - + 33% (3s) of runtime with CRIU, but 32% reduction with CRIU (17s vs 25s) if there is a 1s sleep before 3rd and 4th call
+  # run-test-in-directory-fn-end-instr-mt "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+  
+  # basic smokes consist of simple replacement instrumentation and timeouts (with C examples)
 
   run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
 

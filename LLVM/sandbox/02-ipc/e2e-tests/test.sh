@@ -31,7 +31,7 @@ ModMapsPath="$BuildDir"/module-maps/
 cd ../../ipc-hooklib
 
 cmake ./ -DCFG_MANUAL=OFF
-make
+make -j4
 
 # build the first instrumentation stage
 rm -rf "$BuildDir"
@@ -44,10 +44,6 @@ cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
 
 if [ -d "$IRTestScriptDir" ];
 then
-  # TODO: make this a local function (build dir + cmake args?)
-  # testing IR - create a twin build directory
-  # where we only generate IR and inspect it
-
   TmpBuildDir="$BuildDir"/../build-ir-test
   rm -rf "$TmpBuildDir"
   mkdir "$TmpBuildDir"
@@ -69,7 +65,7 @@ then
   # initialize directory for llvm pass artifacts
   mkdir "./mmaps"
   make clean
-  make
+  make -j4
 
   echo "pre-testing LLVM IR $IRTestScriptDir"
   for File in "$IRTestScriptDir"/ir-*.sh; do
@@ -98,7 +94,7 @@ mkdir -p "$OutputsDir"
 mkdir "$ModMapsPath"
 
 make clean
-make
+make -j4
 
 SelectionPath="$OutputsDir"/selected-fns.bin
 
@@ -119,7 +115,7 @@ cmake   -D CMAKE_C_COMPILER=clang \
   ../
 
 make clean
-make
+make -j4
 
 ArgTraceDir="$OutputsDir"/arg-traces-dir
 TestOutputsDir="$OutputsDir"/test-outputs

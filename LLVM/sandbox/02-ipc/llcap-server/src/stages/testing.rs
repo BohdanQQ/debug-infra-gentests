@@ -683,12 +683,6 @@ impl CheckpointedTesting {
     //   .stdin(Stdio::null())
     //   .stdout(Stdio::null());
 
-    // TODO: what?
-    // the below is false, FIXME -> use real paths
-    // the reason for those is the need to create an independent process
-    // so that CRIU can restore later
-    // descriptors are not created - they are created by CRIU
-
     // launch the restore
     let test_process = cmd.spawn().map_err(|e| {
       mk_error(
@@ -880,6 +874,9 @@ async fn wait_or_terminate(mut process: Child, test: &TestRegisryItem) -> TestSt
   let lg = Log::get("wait_or_terminate");
   let process_timeout = test.timeout_process;
   let kill_children = test.terminate_child();
+  // for some reason, the `.wait` call sometimes panics with CRIU support
+  // I was unable to track it down, it seems that tokio might expect the termination to mean
+  // something different than us
   if let Some(timeout_duration) = process_timeout {
     match tokio::time::timeout(timeout_duration, process.wait()).await {
       Err(_) => {
@@ -1643,20 +1640,12 @@ impl TestingPhase for CheckpointedTesting {
 
       match test_job.await {
         Err(e) => errors.push(e),
-        Ok(status)
-          if matches!(
-            status,
-            stages::testing::TestStatus::GlobalTimeout
-              | stages::testing::TestStatus::Spurious(_)
-              | stages::testing::TestStatus::Fatal(_)
-          ) =>
-        {
+        Ok(status) => {
           try_lock_anhw(&results)?.push(LogResult::from_test(
             test_reg.get_test_params(*test).unwrap().0,
             status,
           ));
         }
-        _ => {}
       }
     }
 
