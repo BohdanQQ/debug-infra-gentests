@@ -49,9 +49,9 @@ struct VariantMembers {
 };
 
 #define T_IS(S) std::is_same_v<T, S>
+// creates the check/extract function member pointer pairs
 template <class T, class ResT>
 consteval VariantMembers<ResT> primitiveChecker() {
-
   if constexpr (T_IS(float)) {
     CHECK_EXTRACT_PAIR(flt, ResT);
   } else if constexpr (T_IS(double)) {
@@ -160,7 +160,7 @@ inline bool capture_stringwrap(llcaproto::SingleArgVariant *capture,
 template <> struct ProtobufNestTrait<std::string> {
   using ExtractorType = VariantExtractor<const llcaproto::StringWrap &>;
   // defines the SingleArgVariant member functions that are used to extract/check presence of a
-  // value inside the variant
+  // value inside the variant (these three members will mostly be copy-pasted)
   static constexpr auto MEMBERS = VariantMembers{
     .checker = &llcaproto::SingleArgVariant::has_str,
     .extractor = &llcaproto::SingleArgVariant::str
@@ -173,7 +173,7 @@ template <> struct ProtobufNestTrait<std::string> {
     return (v.*(MEMBERS.checker))();
   }
   // --- used in argument hijacking
-  // returns a function wrapper that
+  // returns a success/failure flag
   // takes in a MUTABLE reference to a target string
   // - if this function returns true, the first argument is a valid
   //   value of the type (meant to be constructed from the wrapper - second

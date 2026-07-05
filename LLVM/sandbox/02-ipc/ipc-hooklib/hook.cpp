@@ -523,7 +523,7 @@ static void perform_testing(uint32_t module_id, uint32_t function_id) {
 
   std::exit(0);
 }
-::llcaproto::Arguments *s_capptured_args;
+thread_local ::llcaproto::Arguments *s_capptured_args;
 thread_local google::protobuf::Arena s_arena;
 // # in argument tracing
 // the hook_arg_preamble and hook_arg_epilogue
@@ -744,8 +744,8 @@ template <class NumT, class StorageT>
   requires ConvertibleIsh<StorageT, NumT>
 static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
   if (in_testing_mode()) {
-    if (!is_fn_under_test((module), (fn)) || !should_hijack_arg()) {
-      assign<NumT>(*(target), (n));
+    if (!is_fn_under_test(module, fn) || !should_hijack_arg()) {
+      assign<NumT>(*target, n);
       return;
     }
 
@@ -754,8 +754,8 @@ static void hook_t(NumT n, NumT *target, uint32_t module, uint32_t fn) {
   }
   // register value into the static argument packet protobuf
   auto *v = s_capptured_args->add_values();
-  capture_into<StorageT>(v, n);
-  assign<NumT>(*(target), (n));
+  ProtobufNestTrait<StorageT>::variant_capture(v, n);
+  assign<NumT>(*target, n);
 }
 
 // as mentioned in llvm-pass, the variations for same-sized primitives
@@ -781,6 +781,7 @@ GEN_HOOK_FN(hook_uint64, ULLONG, uint64_t)
 // quite a bit more data (size, capacity, content)
 void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
                                     uint32_t module, uint32_t function) {
+  using NestTrait = ProtobufNestTrait<std::string>;
   if (in_testing_mode()) {
     if (!is_fn_under_test(module, function) || !should_hijack_arg()) {
       goto move_string_to_target;
@@ -794,17 +795,17 @@ void llcap_hooklib_extra_cxx_string(std::string *str, std::string **target,
       perror("strhook terr: size, capacity\n");
       exit(HOOKLIB_EC_PKT_RD);
     }
-    if (!arg->has_str()) {
+    if (!NestTrait::check(*arg)) {
       perror("Serious error - unexpected argument type @ hook str\n");
       exit(HOOKLIB_EC_TX_FIN);
     }
-    const auto &str_arg = arg->str();
-    assign_stringwrap(**target, str_arg);
+    const auto &str_arg = NestTrait::extract(*arg);
+    NestTrait::construct(**target, str_arg);
     return;
   } else {
     // argument capture
     auto *v = s_capptured_args->add_values();
-    if (!capture_stringwrap(v, *str, v->GetArena())) {
+    if (!NestTrait::variant_capture(v, *str)) {
       return;
     }
   }
@@ -814,6 +815,9 @@ move_string_to_target:
   *target = str;
 }
 
+// creates an element of type T from the ArgVariant
+// returns true if the element was created
+// Note: the type T shall implement ProtobufNestTrait<T> (see ProtobufNestTrait<std::string>) 
 template <typename T>
 static bool make_one_at(T &target, const llcaproto::SingleArgVariant &source) {
   using NestTrait = ProtobufNestTrait<T>;
@@ -822,7 +826,7 @@ static bool make_one_at(T &target, const llcaproto::SingleArgVariant &source) {
     return false;
   } else {
     auto ex = NestTrait::extract(source);
-    return ProtobufNestTrait<T>::construct(target, ex);
+    return NestTrait::construct(target, ex);
   }
 }
 
@@ -888,9 +892,9 @@ move_vec_to_target:
 
 // creates a vector hooking function under the name "llcap_vector_<id>" (here
 // <id> == cint) that captures std::vector<T> (here T == int32_t) currently, T
-// cannot be bool other custom types have to be registered via ProtobufNestTrait
-// for reference, see the std::string specialization:
-// ProtobufNestTrait<std::string>
+// cannot be bool and other custom types have to be registered via ProtobufNestTrait.
+// For reference, see the std::string specialization:
+// ProtobufNestTrait<std::string> in protoTraits.hpp
 MAKE_VECTOR_HOOK(cint, int32_t)
 // MAKE_VECTOR_HOOK(cuint, uint32_t)
 // MAKE_VECTOR_HOOK(cfloat, float)

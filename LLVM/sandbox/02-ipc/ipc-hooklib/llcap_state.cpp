@@ -19,7 +19,6 @@
 #include <semaphore.h>
 #include <thread>
 #include <threads.h>
-#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -497,6 +496,7 @@ bool receive_packet_proto(void) {
   return locally_initialize_arg_packet(packet, static_cast<int>(packet_size));
 }
 
+// returns the pointer to the next argument
 const llcaproto::SingleArgVariant *get_next_arg() {
   if (sp_packet.values().size() <= s_current_idx) {
     return nullptr;

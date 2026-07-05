@@ -27,7 +27,7 @@ In the following sections, we will explain how one may add support for a hypothe
 
 Let us first focus on the (de)serialization of `T`. This is achieved by [`hooklib`](../sandbox/02-ipc/ipc-hooklib/). Concretely, the `GEN_HOOK_FN` and `MAKE_VECTOR_HOOK` macros and `llcap_hooklib_extra_cxx_string` functions in the [`hook.cpp`](../sandbox/02-ipc/ipc-hooklib/hook.cpp) file are the functions responsible for deserialization.
 
-The `GEN_HOOK_FN` creates a function definition with the appropriate body for a "primitive" (numeric) data type realized via the call to the `hook_t` function.
+For example, for primitive numeric types, the `GEN_HOOK_FN` macro creates a function definition with the appropriate body for a "primitive" (numeric) data type realized via the call to the `hook_t` function.
 
 `hook_t` receives the source value, the pointer to target data, and two 4-byte values uniquely identifying the function (`module ID` and `function ID`). A call to this function is inserted into every *target function* for every one of its (numeric) arguments, effectively achieving something like this (injected lines marked with `//*`):
 
@@ -45,8 +45,8 @@ void foo(int a, float b) {
 ```
 
 Iniside `hook_t`, if you ignore the `if (in_testing_mode)` block, you see the serializing part. In this part, we only require the `source` value and the `target` pointer.
-Serialization has 2 parts: modifying a protobuff packet and assinging data into it (`capture_into`).
-The assignment (via `COPY_AND_RETURN`) right below it is an implementation detail of the approach to the instrumentation that we perform; we explain it in the following.
+Serialization has 2 parts: modifying a protobuf packet and assinging data into it (`variant_capture`, `capture_into`).
+The assignment (`assign`) right below it is an implementation detail of the approach to the instrumentation that we perform; we explain it in the following.
 
 #### Why is the assignment to target needed?
 
@@ -69,7 +69,7 @@ The exact mechanism of the testing is thus:
 `perform_testing` is a no-return function that always exits, effectively terminating the test coordinator/test process.
 
 Looking again at the `hook_t`, now inside the block where `in_testing_mode` holds. 
-Since we are in the testing fork and `should_hijack_arg` holds (point 6 above), we call `hook_t_deserialize`, where deserialization from protocol buffers takes place. We use the `target` 
+Since we are in the testing mode and `should_hijack_arg` holds (point 6 above), we call `hook_t_deserialize`, where deserialization from protocol buffers takes place. We use the `target` 
 pointer to write the binary data into the new argument and return. We can expect that what is 
 written in `*target` will be used as the argument of `foo`. Notice that if any of the checks inside 
 the function fail, the `target` is filled with the original argument anyway.
@@ -84,7 +84,7 @@ Following the vector implementation, nearly arbitrary class `T` can be serialize
 2. the specialization of the `ProtobufNestTrait<T>`
 3. defining function names and constants for the instrumentation (to be able to connect compile-time type `T` with the new argument hook function)
 
-For a dynamic-sized example, see the `T=std::string` with the `StringWrap` protobuf wrapper in `hooklib`. (`ProtobufNestTrait<std::string>` an)
+For a dynamic-sized example, see the `T=std::string` with the `StringWrap` protobuf wrapper in `hooklib`. (`ProtobufNestTrait<std::string>` and usage in `llcap_hooklib_extra_cxx_string`)
 
 More precisely, for custom type serialization and deserialization of `T`, you must:
 
@@ -95,15 +95,18 @@ More precisely, for custom type serialization and deserialization of `T`, you mu
   * ensure you separate the serialization and deserialization by checking `in_testing_mode`
   * deserialize only in the call you're supposed to (see `hook_t` or `llcap_hooklib_extra_cxx_string`)
   * **always** deserialize into the `target` pointer - `*target` must point to an object of `T` even if argument replacement has not taken place
+  * to make `Vector` (and other types that use the recursive `ProtobufNestTrait`) possible, define the trait functions of `ProtobufNestTrait` 
 
 5. rebuild `hooklib` by navigating to its [directory](../sandbox/02-ipc/ipc-hooklib/), running `make`
 
-With (de)serialization code written, we now need to provide information to compiler plugins to 
+With (de)serialization code written, we now **need to provide information to compiler plugins** to 
 detect the type `T` and insert calls to our (de)serialization.
 
-We need to know the `T`'s AST type name and its size (as used in the serialization function written earlier). 
+We **need to know the `T`'s AST type name** and its size (as used in the serialization function written earlier). 
 You can use `clang -Xclang -ast-dump main.c` (or with the `-fsyntax-only` flag) to discover the AST type name of your types. 
 In the next section, we use the type name to bind the type to the hook function.
+
+**Note**: support of types external to `hooklib` obviously require the type to be included in `hooklib`'s compilation.
 
 #### AST plugin extension
 
@@ -154,3 +157,4 @@ the [(de)serialization function](#deserialization) you've created earlier. and `
 Now, compile the plugin by running `make` in the [`llvm-pass` directory](../sandbox/01-llvm-ir/llvm-pass/).
 
 Now, when you re-compile your program using `T` and instrument the proper function, you should see `T` being captured by the `llcap-server`.
+
