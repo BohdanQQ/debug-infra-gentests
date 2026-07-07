@@ -147,7 +147,7 @@ Interfaces for call counter; no checkpointing and single-threaded by default
  */
 class CallCounter {
 public:
-  // purely virtual
+  // abstract
   virtual void register_call() = 0;
   virtual uint32_t get_call_num() = 0;
   virtual void disable_hijacking() = 0;
