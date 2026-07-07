@@ -197,7 +197,7 @@ public:
 
 // Encapsulates the querying over call counts in the multithreaded-support mode
 // only one global instance shall exist
-class LogicalThreadCallCounter : public CallCounter {
+class LogicalThreadCallCounter final : public CallCounter {
   // count-down vector
   std::vector<uint64_t> m_counts;
   // count-up vector (FIXME: can probably be just the count-up vector)
