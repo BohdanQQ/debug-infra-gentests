@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+  constants::Constants,
   log::Log,
   modmap::ExtModuleMap,
   shmem_capture::{
@@ -176,7 +177,6 @@ impl CommonStageParams {
     buff_size: u32,
     modules_path: &PathBuf,
   ) -> Result<(Self, ExtModuleMap)> {
-    const MIN_BUFF_SIZE: u32 = 16;
     let modules = obtain_module_map(modules_path)?;
     let sem_str = null_terminated_to_string(META_SEM_DATA)?;
     let ack_str = null_terminated_to_string(META_SEM_ACK)?;
@@ -185,11 +185,11 @@ impl CommonStageParams {
       "Buffer size must be a multiple of 8 due to alignment requirements (thread ID)"
     );
     // this is a hooklib limit and must be kept in sync
-    // use e2e tests to check for validity of this value (run tests with buffer size equal to MIN_BUFF_SIZE)
+    // use e2e tests to check for validity of this value (run tests with buffer size equal to min_buff_size())
     ensure!(
-      buff_size >= MIN_BUFF_SIZE,
+      buff_size >= Constants::min_buff_size(),
       "Buffer size must be larger (at least {})",
-      MIN_BUFF_SIZE
+      Constants::min_buff_size()
     );
     Ok((
       Self {

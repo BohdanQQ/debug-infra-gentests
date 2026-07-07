@@ -1,6 +1,9 @@
 pub struct Constants {}
 
 impl Constants {
+  pub const fn min_buff_size() -> u32 {
+    16
+  }
   pub const fn parse_fnid_radix() -> u32 {
     10
   }
