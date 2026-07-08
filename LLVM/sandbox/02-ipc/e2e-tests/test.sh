@@ -19,7 +19,7 @@ CppArgs=$*;
 
 cd "$WorkingDir"
 WorkingDir=$(pwd)
-TmpDir="/tmp/$(basename "$WorkingDir")"
+TmpDir="/tmp/llcap-$(basename "$WorkingDir")"
 BuildDir="$TmpDir"/build
 OutputsDir="$TmpDir"/out
 

@@ -159,6 +159,7 @@ function run-criu-with-buffers {
 
 criu_cleanup() {
     screen -S LCT-CR-SOCK -X quit
+    rm /tmp/llcap-criu-socket.service
 }
 
 # the defaults of the llcap-server
@@ -177,6 +178,7 @@ if [ "$1" == "criu" ]; then
   
   run-criu-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
   echo "All done"
+  rm -r /tmp/llcap-testbin-*
   exit 0
 fi
 
@@ -189,3 +191,6 @@ run-detail-tests-with-buffers $SmallLlcapBufSz 2
 run-detail-tests-with-buffers $SmallLlcapBufSz 1
 
 echo "All done"
+# allow failure here
+set +eu
+rm -r /tmp/llcap-testbin-*
