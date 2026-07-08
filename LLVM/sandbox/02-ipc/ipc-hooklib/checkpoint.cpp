@@ -96,6 +96,9 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
     std::cerr << std::format("Configuring Checkpoint\n\tdump dir: {}\n\tcriu socket path: {}\n\tlog id: {}", dumpDir, criuSockPath, logId) << std::endl;
   }
 
+  // no local_ options, either way, does not work for now
+  // criu_set_unprivileged(true);
+
   criu_opts *opts = nullptr;
   int rv = criu_local_init_opts(&opts);
   auto errmsg = [&rv](const std::string &prefix) {

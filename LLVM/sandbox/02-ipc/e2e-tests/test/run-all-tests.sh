@@ -1,4 +1,5 @@
 #!/bin/bash
+set -eu
 
 function run-test {
   TestDir=$1; shift;
@@ -88,15 +89,6 @@ function run-test-in-directory-fn-end-instr-mt {
 function run-smoke-tests-with-buffers {
   Size=$1; shift
   Count=$1; shift
-
-  # CRIU support - basic
-  # these are first as the CRIU support sometimes makes tokio panic when waiting for a processs
-  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-simple" "test_target" 10 "$Size" "$Count"
-  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
-  
-  # overhead demonstration - + 33% (3s) of runtime with CRIU, but 32% reduction with CRIU (17s vs 25s) if there is a 1s sleep before 3rd and 4th call
-  # run-test-in-directory-fn-end-instr-mt "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
-  
   # basic smokes consist of simple replacement instrumentation and timeouts (with C examples)
 
   run-test-in-directory-custom-buffers "testbin-arg-replacement-simple" "test_target" 5 "$Size" "$Count"
@@ -152,10 +144,41 @@ function run-detail-tests-with-buffers {
   run-test-in-directory-fn-end-instr "testbin-arg-replacement-unc-exc-call-rv" "test_target" 5 "$Size" "$Count"
 }
 
+function run-criu-with-buffers {
+  Size=$1; shift
+  Count=$1; shift
+  
+  # CRIU support - basic
+  # these are first as the CRIU support sometimes makes tokio panic when waiting for a processs
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-simple" "test_target" 10 "$Size" "$Count"
+  run-test-in-dir-fnend-instr-criu "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+  
+  # overhead demonstration - + 33% (3s) of runtime with CRIU, but 32% reduction with CRIU (17s vs 25s) if there is a 1s sleep before 3rd and 4th call
+  # run-test-in-directory-fn-end-instr-mt "testbin-checkpoint-fails"  "test_target" 10 "$Size" "$Count"
+}
+
+criu_cleanup() {
+    screen -S LCT-CR-SOCK -X quit
+}
+
 # the defaults of the llcap-server
 DefaultLlcapBufSz="4194304" 
 DefaultLlcapBufCnt="10"
 SmallLlcapBufSz="24"
+
+if [ "$1" == "criu" ]; then
+  if [[ $EUID -ne 0 ]]; then
+    echo "CRIU-supported testing must be run as root" 
+    exit 1
+  fi
+  echo "Set up criu socket"
+  chmod 777 /run/screen
+  screen -dmS LCT-CR-SOCK bash -c "./criu-socket.sh"
+  
+  run-criu-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
+  echo "All done"
+  exit 0
+fi
 
 run-smoke-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
 run-smoke-tests-with-buffers $SmallLlcapBufSz 2

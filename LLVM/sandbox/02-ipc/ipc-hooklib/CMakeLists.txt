@@ -8,7 +8,7 @@ option(CFG_MANUAL "Library compiled without auto initialization and deinitializa
 
 cmake_minimum_required(VERSION 3.30)
 project(my-hook)
-
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_compile_options(-Wall -Wextra -Wconversion -Wpedantic -Wmost)
 
@@ -21,7 +21,8 @@ include_directories(${PROTOBUF_INCLUDE_DIRS} ./)
   # with some selection of ignored warnings
 #-Wno-declaration-after-statement -Wno-pre-c23-compat -Wno-c++98-compat -Wno-pre-c11-compat -Wno-global-constructors -Wno-c++98-compat-pedantic -Wno-covered-switch-default -Wno-padded)
 
-add_library(my-hook SHARED ./hook.cpp ./llcap_state.cpp ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c ./protobuf/proto/main.pb.cc ./checkpoint.cpp)
+add_library(my-hook SHARED ./hook.cpp ./llcap_state.cpp ./shm_write_channel.c ./shm_util.c ./shm_oneshot_rx.c ./checkpoint.cpp)
+protobuf_generate(TARGET my-hook LANGUAGE cpp PROTOS ./protobuf/proto/main.proto)
 target_link_libraries(my-hook ${PROTOBUF_LIBRARY} criu)
 
 set_target_properties(my-hook PROPERTIES C_STANDARD 23)

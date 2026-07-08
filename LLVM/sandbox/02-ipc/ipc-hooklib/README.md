@@ -4,7 +4,7 @@ This library allows the instrumented program to communicate with the [`llcap-ser
 
 ## Prerequisites
 
-Protocol Buffers - `protoc`, `protobuf-devel` (tested with `libprotoc 3.19.6`)
+Protocol Buffers - `protoc`, `protobuf-devel` (tested with `libprotoc 3.19.6`), `criu`
 
 ## Build
 

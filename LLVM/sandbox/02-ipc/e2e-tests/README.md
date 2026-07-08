@@ -12,18 +12,22 @@ For each test, artifacts are stored in the `out` and `build` directories.
 
 ## Running "all" tests
 
-For CRIU support, run everyting as root and initialize the CRIU socket:
-
-```bash
-sudo criu service -vvvv --address /tmp/llcap-criu-socket.service
-```
 
 then:
 
 ```bash
 cd ./test 
 ./run-all-tests.sh
+# or for CRIU-based tests:
+sudo ./run-all-tests.sh criu
 ```
+
+For CRIU support, run everyting as root and initialize the CRIU socket:
+
+```bash
+sudo criu service -vvvv --address /tmp/llcap-criu-socket.service
+```
+
 
 ## How it works
 

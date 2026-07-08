@@ -1,7 +1,7 @@
 #ifndef LLL_DEBUG
 #define LLL_DEBUG
 
-#define DEBUG
+// #define DEBUG
 
 #ifdef DEBUG
 constexpr inline bool DBG = true;
