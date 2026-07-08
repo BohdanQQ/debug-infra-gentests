@@ -134,6 +134,10 @@ impl Log {
     LOG_LEVEL.swap(verbosity, std::sync::atomic::Ordering::Relaxed)
   }
 
+  pub fn is_debug() -> bool {
+    u8::from(LogLevel::Trace) <= LOG_LEVEL.load(std::sync::atomic::Ordering::Relaxed)
+  }
+
   pub fn get(name: &str) -> Logger {
     Logger::new(name)
   }

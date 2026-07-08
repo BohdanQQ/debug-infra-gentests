@@ -20,6 +20,7 @@ use tokio::{
 
 use crate::{
   args::PacketInspecSpec,
+  libc_wrappers::get_child_exit_code_with_timeout,
   log::{IntoLogString, Log, LogStrategy},
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid},
   phase::try_lock_anhw,
@@ -634,7 +635,7 @@ impl CheckpointedTesting {
     &self,
     metadata_svr: Arc<Mutex<MetadataPublisher>>,
     test: &TestRegisryItem,
-    restore_path: &str,            // restore from where
+    dump_path: &str,               // restore from where
     checkpoint_path: Option<&str>, // checkpoint if applicable
   ) -> Result<TestStatus, TestJobFailure> {
     let infra_params = self.common.params.infra;
@@ -657,7 +658,7 @@ impl CheckpointedTesting {
     };
     let lg = Log::get("singular_restore_job");
     // prepare job parameters
-    let restore_path = {
+    let dump_path = {
       let mut guard = metadata_svr.lock().unwrap();
       guard.re_new().map_err(|v| {
         TestJobFailure::from_test(
@@ -670,21 +671,40 @@ impl CheckpointedTesting {
 
       send_test_metadata(&mut guard, infra_params, test, checkpoint_path)
         .map_err(|e| mk_error(e, TestStatus::Timeout))?;
-      restore_path.to_string()
+      dump_path.to_string()
     };
 
-    lg.info(format!("Restoring from {restore_path}"));
+    const PIDFILE: &'static str = "/tmp/llcap-criu-pidfile";
+    // must be removed in order for the PID to get written
+    let _ = tokio::fs::remove_file(PIDFILE).await;
+
+    lg.info(format!("Restoring from {dump_path}"));
     // prepare the "command", mainly the std out/err
-    let mut cmd = cmd_from_args(&["criu", "restore", "-D", &restore_path])
+    let mut cmd = vec![
+      "criu",
+      "restore",
+      // for unprivileged runs (Not working currently)
+      // "--unprivileged",
+      // the following are required for exit code tracking
+      // combining the two options with --pidfile allows child tracking and therefore exit status tracking
+      // https://criu.org/Tree_after_restore
+      "--restore-detached",
+      "--restore-sibling",
+      "--pidfile",
+      PIDFILE,
+      // dump path
+      "-D",
+      &dump_path,
+    ];
+    if Log::is_debug() {
+      cmd.push("-v4");
+    }
+
+    let mut cmd: Command = cmd_from_args(&cmd)
       .map_err(|e| mk_error(e, TestStatus::Fatal("Command creation".to_owned())))?;
-    // TODO: uncomment
-    // cmd
-    //   .stderr(Stdio::null())
-    //   .stdin(Stdio::null())
-    //   .stdout(Stdio::null());
 
     // launch the restore
-    let test_process = cmd.spawn().map_err(|e| {
+    let mut restore_process = cmd.spawn().map_err(|e| {
       mk_error(
         anyhow!("spawn restore from command: {e}"),
         TestStatus::Fatal("Spawn".to_owned()),
@@ -692,14 +712,25 @@ impl CheckpointedTesting {
     })?;
 
     lg.info(format!(
-      "PID of the restored program: {:?}",
-      test_process.id()
+      "PID of the restore process: {:?}",
+      restore_process.id()
     ));
+    restore_process.wait().await.map_err(|v| {
+      TestJobFailure::from_test(
+        test,
+        &format!("{v}"),
+        Some(TestStatus::Fatal(
+          "Failed to wait for the CRIU restore".to_owned(),
+        )),
+      )
+    })?;
 
-    let result = wait_or_terminate(test_process, test).await;
+    let (test_pid, test_exit) = wait_restored_test(test, &PathBuf::from(PIDFILE))?;
+    let test_exit = status_or_kill(test, test_pid, test_exit).await?;
 
+    let result = TestStatus::from(test_exit);
     sleep(Duration::from_millis(300)).await;
-    lg.trace(format!("final status: {result:?}"));
+    lg.trace(format!("final status: {test_exit:?} from {result:?}"));
     output_gen
       .persist_after_restore(test, paths)
       .map_err(|e| TestJobFailure::from_test(test, format!("Failed to persist {e}"), None))?;
@@ -761,9 +792,7 @@ impl CheckpointedTesting {
     }
     let lg = Log::get("singular_checkpointing_job");
     // lambda transforming the test errors to proper return values
-    let mk_error = |error: anyhow::Error, status: TestStatus| {
-      TestJobFailure::from_test(test, error.to_string(), Some(status))
-    };
+    let mk_error = |err, stat| mk_fail(test, err, stat);
 
     match mode {
       CheckpointJobMode::Restore(idx) => {
@@ -857,6 +886,84 @@ impl CheckpointedTesting {
       }
     }
   }
+}
+
+fn mk_fail(test: &TestRegisryItem, error: anyhow::Error, status: TestStatus) -> TestJobFailure {
+  TestJobFailure::from_test(test, error.to_string(), Some(status))
+}
+
+async fn status_or_kill(
+  test: &TestRegisryItem,
+  test_pid: i32,
+  test_exit: Option<ExitStatus>,
+) -> Result<ExitStatus, TestJobFailure> {
+  let Some(test_exit) = test_exit else {
+    let mut spawned = cmd_from_args(&["kill", "-9", &test_pid.to_string()])
+      .and_then(|mut v| v.spawn().map_err(|e| anyhow!("Kill spawn failed: {e}")))
+      .map_err(|e| mk_fail(test, e, TestStatus::Fatal("kill".to_owned())))?;
+    spawned
+      .wait()
+      .await
+      .map_err(|e| mk_fail(test, anyhow!(e), TestStatus::Fatal("kill-wait".to_owned())))?;
+
+    return Err(TestJobFailure::from_test(
+      test,
+      "",
+      TestStatus::Timeout.into(),
+    ));
+  };
+  Ok(test_exit)
+}
+
+/// Waits for the given test identified by the PID in the pidfile.
+/// Assumes pidfile contains decimal-encoded PID of the process (as created by CRIU)
+fn wait_restored_test(
+  test: &TestRegisryItem,
+  pidfile: &PathBuf,
+) -> Result<(i32, Option<ExitStatus>), TestJobFailure> {
+  let lg = Log::get("wait_restored_test");
+  let test_pid = fs::read(pidfile).map_err(|e| {
+    TestJobFailure::from_test(
+      test,
+      "",
+      Some(TestStatus::Fatal(format!(
+        "Failed to read CRIU restore pidfile: {}",
+        e.to_string()
+      ))),
+    )
+  })?;
+  lg.trace(format!("Pidfile read: {test_pid:?}"));
+  let test_pid = String::from_utf8(test_pid).map_err(|e| {
+    TestJobFailure::from_test(
+      test,
+      "",
+      Some(TestStatus::Fatal(format!(
+        "Failed to parse CRIU restore pidfile: {}",
+        e.to_string()
+      ))),
+    )
+  })?;
+  let test_pid = libc::pid_t::from_str_radix(&test_pid, 10).map_err(|e| {
+    TestJobFailure::from_test(
+      test,
+      "",
+      Some(TestStatus::Fatal(format!(
+        "Failed to parse CRIU restore PID: {}",
+        e.to_string()
+      ))),
+    )
+  })?;
+  let test_exit = get_child_exit_code_with_timeout(test_pid, test.timeout_test).map_err(|e| {
+    TestJobFailure::from_test(
+      test,
+      "",
+      Some(TestStatus::Fatal(format!(
+        "Failed to wait for CRIU restore PID {test_pid}: {}",
+        e.to_string()
+      ))),
+    )
+  })?;
+  Ok((test_pid, test_exit))
 }
 
 #[derive(Debug)]

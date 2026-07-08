@@ -19,8 +19,9 @@ CppArgs=$*;
 
 cd "$WorkingDir"
 WorkingDir=$(pwd)
-BuildDir="$WorkingDir"/build
-OutputsDir="$WorkingDir"/out
+TmpDir="/tmp/$(basename "$WorkingDir")"
+BuildDir="$TmpDir"/build
+OutputsDir="$TmpDir"/out
 
 # "testbin" name should be hardcoded into the cmakelists.txt file
 LlcapSvrBin="$WorkingDir/../../llcap-server/target/debug/llcap-server"
@@ -34,33 +35,36 @@ cmake ./ -DCFG_MANUAL=OFF
 make -j4
 
 # build the first instrumentation stage
-rm -rf "$BuildDir"
-mkdir "$BuildDir"
+rm -rf "$TmpDir"
+mkdir -p "$BuildDir"
 cd "$BuildDir"
+
+trap 'rm -f /tmp/xd' EXIT
+ln -sf "$WorkingDir/../../ipc-hooklib/" /tmp/llcap-hooklib
 
 # ! assume llvm pass to be built 
 # (avoiding rebuild, because this is quite a long compilation)
-cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$BuildDir"
+cp "$WorkingDir/../../../01-llvm-ir/llvm-pass/libfn-pass.so" "$BuildDir"
 
 if [ -d "$IRTestScriptDir" ];
 then
   TmpBuildDir="$BuildDir"/../build-ir-test
   rm -rf "$TmpBuildDir"
-  mkdir "$TmpBuildDir"
+  mkdir -p "$TmpBuildDir"
 
-  cp ../../../../01-llvm-ir/llvm-pass/libfn-pass.so "$TmpBuildDir"
+  cp "$WorkingDir/../../../01-llvm-ir/llvm-pass/libfn-pass.so" "$TmpBuildDir"
   cd "$TmpBuildDir"
 
   
   cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
   cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=../libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -S -emit-llvm" \
-  ../
+  "$WorkingDir"
  
   # initialize directory for llvm pass artifacts
   mkdir "./mmaps"
@@ -80,13 +84,13 @@ fi
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
-  ../
+  "$WorkingDir"
 
 # re-initialize artifact directories
 mkdir -p "$OutputsDir"
@@ -106,13 +110,13 @@ echo "!!! Rebuilding"
 
 cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
-  ../
+  "$WorkingDir"
 
 cmake   -D CMAKE_C_COMPILER=clang \
   -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   -D CMAKE_CXX_COMPILER=clang++ \
   -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
-  ../
+  "$WorkingDir"
 
 make clean
 make -j4

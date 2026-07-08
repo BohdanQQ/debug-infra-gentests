@@ -2,6 +2,7 @@ pub struct Constants {}
 
 impl Constants {
   pub const fn min_buff_size() -> u32 {
+    // must be kept equal to the size of the thread ID + FN ID + MOD ID
     16
   }
   pub const fn parse_fnid_radix() -> u32 {

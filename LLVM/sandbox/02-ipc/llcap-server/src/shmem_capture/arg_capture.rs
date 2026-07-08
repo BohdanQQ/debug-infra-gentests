@@ -99,6 +99,7 @@ impl PartialCaptureState {
   }
 
   fn progress_read_thread_id(raw_buff: &mut ReadOnlyBufferPtr, id: NumFunUid) -> Result<Self> {
+    // the total amount of bytes is Constants::min_buff_size
     let lg = Log::get("progress::progress_read_thread_id");
     lg.trace("Reading thread ID");
     // size defined by the protocol
@@ -261,7 +262,7 @@ pub fn perform_arg_capture(
   let thread_dump_path = capture_target.dump_root();
   let capture = ArgCapture {
     readers: get_sizetype_readers(),
-    thread_logic_id: 0, // TODO: make these 3 defaulted...
+    thread_logical_id: 0,
     thread_logical_counts: Vec::new(),
     thread_logical_ids: HashMap::new(),
     capture_target,
@@ -280,7 +281,7 @@ struct ArgCapture<'a> {
   readers: SizeTypeReaders,
   capture_target: &'a mut ArgPacketDumper,
   // local auto-increment id
-  thread_logic_id: u64,
+  thread_logical_id: u64,
   // local map TID -> logical ID (0-based)
   thread_logical_ids: HashMap<u64, u64>,
   // thread logical ID -> call count
@@ -334,8 +335,8 @@ impl CaptureLoop for ArgCapture<'_> {
           Log::get("argCap update_from_buffer").trace(format!("{buff:02X?}"));
           // register the thread
           let logical_id = self.thread_logical_ids.entry(thread_id).or_insert_with(|| {
-            let val = self.thread_logic_id;
-            self.thread_logic_id += 1;
+            let val = self.thread_logical_id;
+            self.thread_logical_id += 1;
             self.thread_logical_counts.push(0);
             val
           });
