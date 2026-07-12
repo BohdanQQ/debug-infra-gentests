@@ -1,6 +1,6 @@
 FROM fedora:42 as BUILD
 
-RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu screen cargo
+RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu-devel screen cargo
 
 # repo location
 WORKDIR /opt/llcap
@@ -9,10 +9,10 @@ WORKDIR /opt/llcap
 RUN git clone "https://github.com/BohdanQQ/debug-infra-gentests.git"
 WORKDIR /opt/llcap/debug-infra-gentests
 RUN git checkout "thesis/checkpointing"
+
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 RUN git submodule update --init --depth=1 ./sandbox/llvm-project
 
-RUN dnf install -y criu-devel
 # Hook library
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
 RUN cmake ./
