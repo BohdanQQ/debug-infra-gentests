@@ -228,8 +228,7 @@ impl TracingInfra {
       });
     ensure!(
       goodbye_errors.is_empty(),
-      "Deinit failures: {}",
-      goodbye_errors
+      "Deinit failures: {goodbye_errors}"
     );
     Ok(())
   }
@@ -292,8 +291,7 @@ impl TracingInfra {
   fn buffer_offset(&self, idx: usize) -> Result<usize> {
     ensure!(
       idx < self.logical_buffer_count,
-      "Invalid buffer index {}",
-      idx
+      "Invalid buffer index {idx}"
     );
     Ok(idx * self.logical_buffer_size)
   }
@@ -308,17 +306,13 @@ impl TracingInfra {
     let backing_mem_len = self.backing_buffer.len() as usize;
     ensure!(
       buff_offset < backing_mem_len,
-      "Offset too large: {}, compared to the (mut) buffers len {}",
-      buff_offset,
-      backing_mem_len
+      "Offset too large: {buff_offset}, compared to the (mut) buffers len {backing_mem_len}",
     );
     let base_mem = self.backing_buffer.borrow_ptr_mut()?;
     let buffer_start = ptr_add_nowrap_mut(*base_mem, buff_offset)?;
     ensure!(
       !buffer_start.is_null() && buffer_start >= *base_mem,
-      "Buffer mut pointer is invalid: {:?}, offset: {}",
-      buffer_start,
-      buff_offset
+      "Buffer mut pointer is invalid: {buffer_start:?}, offset: {buff_offset}"
     );
     {
       let test_value_len = ptr_add_nowrap(buffer_start, std::mem::size_of::<u32>())?;
@@ -326,9 +320,7 @@ impl TracingInfra {
         !test_value_len.is_null()
           && test_value_len >= *base_mem
           && test_value_len < ptr_add_nowrap(*base_mem, backing_mem_len)?,
-        "Buffer mut pointer is invalid (u32 test): {:?}, offset: {}",
-        test_value_len,
-        buff_offset
+        "Buffer mut pointer is invalid (u32 test): {test_value_len:?}, offset: {buff_offset}"
       );
     }
     Log::get("writerptr").trace(format!("Ptr {buffer_start:?}"));
@@ -355,9 +347,7 @@ impl TracingInfra {
       let test_value = ptr_add_nowrap(*base_mem, buff_offset)?;
       ensure!(
         !test_value.is_null() && test_value >= *base_mem,
-        "Buffer const pointer is invalid: {:?}, offset: {}",
-        test_value,
-        buff_offset
+        "Buffer const pointer is invalid: {test_value:?}, offset: {buff_offset}"
       );
       let test_value_end = ptr_add_nowrap(test_value, self.logical_buffer_size)?;
       ensure!(

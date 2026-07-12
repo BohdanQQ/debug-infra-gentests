@@ -117,7 +117,7 @@ where
   match timeout(Duration::from_secs(10), monitor_ready_rx).await {
     Ok(Ok(val)) => ensure!(val, "Monitor NOT ready"),
     Err(_) => bail!("Monitor ready timeout"),
-    Ok(Err(e)) => bail!("monitor ready error: {}", e),
+    Ok(Err(e)) => bail!("monitor ready error: {e}"),
   }
 
   lg.progress("Monitor ready, listening!");
@@ -126,7 +126,7 @@ where
 
   child_monitor
     .await
-    .map_err(|e| anyhow!("Child monitor join {:?}", e))?;
+    .map_err(|e| anyhow!("Child monitor join {e:?}"))?;
   Ok(res)
 }
 
@@ -137,9 +137,8 @@ pub fn obtain_module_map(path: &std::path::PathBuf) -> Result<ExtModuleMap> {
     Ok(m) => Ok(m),
     Err(e) => {
       lg.crit(format!(
-        "Could not parse module mapping from {}:\n{}",
+        "Could not parse module mapping from {}:\n{e}",
         path.to_string_lossy(),
-        e
       ));
       bail!("Could not parse module mapping");
     }

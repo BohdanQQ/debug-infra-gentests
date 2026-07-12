@@ -67,8 +67,9 @@ impl PartialCaptureState {
     let rcvd_id = IntegralModId::from(rcvd_id);
     ensure!(
       mods.get_module_string_id(rcvd_id).is_some(),
-      "Module ID {} is unknown",
-      *rcvd_id
+      "Module ID {}/{} is unknown",
+      *rcvd_id,
+      rcvd_id.hex_string()
     );
     lg.trace(format!("Mod Id: 0x{:02X}", *rcvd_id));
     Ok(Self::GotModuleId { module_id: rcvd_id })

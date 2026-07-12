@@ -44,9 +44,6 @@ pub fn get_child_exit_code_with_timeout(
       return Ok(Some(ExitStatus::from_raw(status)));
     }
 
-    return Err(io::Error::new(
-      io::ErrorKind::Other,
-      "Unexpected PID returned from waitpid",
-    ));
+    return Err(io::Error::other("Unexpected PID returned from waitpid"));
   }
 }

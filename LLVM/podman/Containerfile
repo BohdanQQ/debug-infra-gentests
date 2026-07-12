@@ -1,15 +1,29 @@
 FROM fedora:42 as BUILD
 
-# dependencies for LLVM
-RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools
+RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu screen cargo
 
-# research project repo location
+# repo location
 WORKDIR /opt/llcap
 
 # improvement: make repo-name-agnostic
-RUN git clone "https://github.com/d3sformal/debug-infra-gentests.git"
+RUN git clone "https://github.com/BohdanQQ/debug-infra-gentests.git"
+WORKDIR /opt/llcap/debug-infra-gentests
+RUN git checkout "thesis/checkpointing"
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 RUN git submodule update --init --depth=1 ./sandbox/llvm-project
+
+RUN dnf install -y criu-devel
+# Hook library
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
+RUN cmake ./
+RUN make -j $(nproc)
+
+# llcap-server
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server
+RUN cargo b
+RUN cargo b --release
+RUN cargo install --root ./ --path ./
+RUN cargo clean
 
 # apply our LLVM patch
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/llvm-project
@@ -45,19 +59,6 @@ WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass
 RUN cmake ./
 RUN make -j $(nproc)
 
-# Hook library
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
-RUN dnf install -y protobuf-compiler protobuf protobuf-devel
-RUN protoc --cpp_out=./ ./protobuf/proto/main.proto 
-RUN cmake ./
-RUN make -j $(nproc)
-
-RUN dnf install -y cargo
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server
-RUN cargo b
-RUN cargo b --release
-RUN cargo install --root ./ --path ./
-RUN cargo clean
 # Remove redundancies
 RUN rm -rf /opt/llcap/debug-infra-gentests/LLVM/.git/
 # (tested with the example-arg-replacement demo)
@@ -70,7 +71,7 @@ RUN cp ./llcap-server/bin/llcap-server ./llcap-server/target/debug
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests/test
 RUN ./run-all-tests.sh
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests
-RUN ./clean-all.sh
+RUN ./clean-all.sh || true
 
 FROM fedora:42
 # installing from install_manifest.txt (https://github.com/docker/for-linux/issues/1060) also yields multi-GB image, therefore copying it all
@@ -78,7 +79,8 @@ COPY --from=BUILD /usr/local/ /usr/local/
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 # clang, etc for C & C++ standard library
-RUN dnf install -y make cmake clang clang++ protobuf-compiler protobuf protobuf-devel && dnf clean all -y
+RUN dnf install -y make cmake clang clang++ protobuf-compiler protobuf protobuf-devel criu-devel screen
+RUN dnf clean all -y
 # improvement: can we limit this copy to LLVM only?
 COPY --from=BUILD /opt/llcap/debug-infra-gentests/* /opt/llcap/debug-infra-gentests/LLVM
 

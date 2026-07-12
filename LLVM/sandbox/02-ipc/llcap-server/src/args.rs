@@ -126,7 +126,7 @@ pub enum Stage {
   },
 
   Test {
-    // path to the function selection file (generated in the call-tracing phase)
+    /// path to the function selection file (generated in the call-tracing phase) or "skip" to allow all functions from module maps
     #[arg(short, long, default_value = Constants::default_selected_functions_path())]
     selection_file: PathBuf,
 

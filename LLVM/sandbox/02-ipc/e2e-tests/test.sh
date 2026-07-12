@@ -39,7 +39,6 @@ rm -rf "$TmpDir"
 mkdir -p "$BuildDir"
 cd "$BuildDir"
 
-trap 'rm -f /tmp/xd' EXIT
 ln -sf "$WorkingDir/../../ipc-hooklib/" /tmp/llcap-hooklib
 
 # ! assume llvm pass to be built 
@@ -86,16 +85,17 @@ cmake -D CMAKE_C_COMPILER=clang \
   -D CMAKE_CXX_COMPILER=clang++ \
   "$WorkingDir"
 
+# initialize directory for llvm pass artifacts
+mkdir "$ModMapsPath"
+
 cmake -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="-mllvm -Call -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
   "$WorkingDir"
 
 # re-initialize artifact directories
 mkdir -p "$OutputsDir"
-# initialize directory for llvm pass artifacts
-mkdir "$ModMapsPath"
 
 make clean
 make -j4
@@ -113,9 +113,9 @@ cmake -D CMAKE_C_COMPILER=clang \
   "$WorkingDir"
 
 cmake   -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-verbose -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
   "$WorkingDir"
 
 make clean

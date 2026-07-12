@@ -53,15 +53,22 @@ cl::opt<InstrumentationType> InstrumentationType(
         llvm ::cl ::OptionEnumValue{.Name = "Call",
                                     .Value = int(InstrumentationType::Call),
                                     .Description = "Call tracing"},
-        llvm ::cl ::OptionEnumValue{.Name = "Arg",
-                                    .Value = int(InstrumentationType::Arg),
-                                    .Description = "Argument tracing"}));
+        llvm ::cl ::OptionEnumValue{
+            .Name = "Arg",
+            .Value = int(InstrumentationType::Arg),
+            .Description = "Argument tracing/testing"}));
 
 // -mllvm -llcap-fn-targets-file
 cl::opt<std::string>
     TargetsFilePath("llcap-fn-targets-file",
                     cl::desc("Path to a file containing the module IDs and "
                              "function IDs of functions to be instrumented"));
+
+// -mllvm -llcap-fn-target-regex
+cl::opt<std::string> TargetFnRegex(
+    "llcap-fn-target-regex",
+    cl::desc("Regular expression specifying the fully qualified function name "
+             "to instrument for argument capture/testing"));
 
 // -mllvm -llcap-instrument-fn-exit
 cl::opt<bool> InstrumentFnExit(
@@ -79,15 +86,19 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
     verbose(args::Verbose.getValue(), args::Verbose.getValue());
     debug(args::Debug.getValue(), args::Debug.getValue());
 
-    VERBOSE_LOG << "Running pass on module " << M.getModuleIdentifier()
-                      << "\n";
+    VERBOSE_LOG << "Running pass on module " << M.getModuleIdentifier() << "\n";
 
     auto Cfg = std::make_shared<Instrumentation::Config>();
     Cfg->useMangledNames = args::MangleFilter;
-    Cfg->modMapsDir = args::MapFilesDirectory.getValue();
+    Cfg->modMapsDir = args::MapFilesDirectory.hasArgStr()
+                          ? Maybe<Str>(args::MapFilesDirectory.getValue())
+                          : "module-maps";
     Cfg->performFnExitInstrumentation = args::InstrumentFnExit.getValue();
-    Cfg->SelectionPath = args::TargetsFilePath;
-
+    Cfg->selectingByRegex = args::TargetFnRegex.hasArgStr() &&
+                            !args::TargetFnRegex.getValue().empty();
+    Cfg->SelectionStr = Cfg->selectingByRegex
+                            ? args::TargetFnRegex.getValue()
+                            : args::TargetsFilePath.getValue();
     if (instrumentArgs()) {
       VERBOSE_LOG << "Instrumenting args...\n";
       ArgumentInstrumentation Work(M, Cfg);

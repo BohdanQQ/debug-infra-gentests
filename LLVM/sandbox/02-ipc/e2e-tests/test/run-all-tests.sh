@@ -1,5 +1,5 @@
 #!/bin/bash
-set -eu
+set -x
 
 function run-test {
   TestDir=$1; shift;
@@ -9,7 +9,7 @@ function run-test {
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
   MTMode=$1; shift
-  ExtraArgs=$*; shift;
+  ExtraArgs=$*;
 
   IRTestScript="$OutTestScript"/ir;
   cd ../
@@ -168,12 +168,14 @@ DefaultLlcapBufCnt="10"
 SmallLlcapBufSz="24"
 
 if [ "$1" == "criu" ]; then
+  set -e
   if [[ $EUID -ne 0 ]]; then
     echo "CRIU-supported testing must be run as root" 
     exit 1
   fi
   echo "Set up criu socket"
   chmod 777 /run/screen
+  trap 'criu_cleanup' EXIT
   screen -dmS LCT-CR-SOCK bash -c "./criu-socket.sh"
   
   run-criu-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
@@ -182,6 +184,7 @@ if [ "$1" == "criu" ]; then
   exit 0
 fi
 
+set -e
 run-smoke-tests-with-buffers $DefaultLlcapBufSz $DefaultLlcapBufCnt
 run-smoke-tests-with-buffers $SmallLlcapBufSz 2
 run-smoke-tests-with-buffers $SmallLlcapBufSz 1
@@ -192,5 +195,5 @@ run-detail-tests-with-buffers $SmallLlcapBufSz 1
 
 echo "All done"
 # allow failure here
-set +eu
+set +e
 rm -r /tmp/llcap-testbin-*

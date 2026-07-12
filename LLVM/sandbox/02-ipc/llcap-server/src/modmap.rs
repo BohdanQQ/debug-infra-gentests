@@ -236,14 +236,12 @@ impl FunctionMap {
         )?;
       ensure!(
         self.demangled_name_to_fnid.remove(&expected_name).is_some(),
-        "Inconsistent structures: demangled -> id missing {}",
-        expected_name
+        "Inconsistent structures: demangled -> id missing {expected_name}"
       );
       ensure!(
         self.fnid_to_argument_sizes.remove(&counter_id).is_some(),
-        "Inconsistent structures: id -> argsizes missing {} {}",
-        counter_id.0,
-        expected_name
+        "Inconsistent structures: id -> argsizes missing {} {expected_name}",
+        counter_id.0
       );
       lg.trace(format!("Masked out function {}", counter_id.hex_string()));
     }
@@ -431,11 +429,11 @@ impl ExtModuleMap {
     {
       let allowed = allowlist_fn
         .get(modid)
-        .ok_or(anyhow!("Unknown module ID {:?}", modid))?;
+        .ok_or(anyhow!("Unknown module ID {modid:?}"))?;
       let functions = self
         .function_ids
         .get_mut(modid)
-        .ok_or(anyhow!("Functions not found for {:?}", modid))?;
+        .ok_or(anyhow!("Functions not found for {modid:?}"))?;
       lg.info(format!("Module {}:", modid.hex_string()));
       functions.mask_include(allowed)?;
       lg.info(format!(
@@ -482,7 +480,7 @@ impl ExtModuleMap {
       .and_then(|v| v.to_str())
       .and_then(|v| IntegralModId::try_from(v).into())
       .map_or_else(
-        || Err(anyhow!("Invalid path {:?}", path_to_modfile)),
+        || Err(anyhow!("Invalid path {path_to_modfile:?}")),
         |hash_res| hash_res,
       )?;
 

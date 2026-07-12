@@ -10,6 +10,7 @@ use crate::{
   constants::Constants,
   log::Log,
   modmap::{ExtModuleMap, IntegralFnId, IntegralModId, NumFunUid, TextFunUid},
+  skip_tracing_selection,
 };
 
 /// Call tracing message received from instrumented application
@@ -156,6 +157,9 @@ pub fn export_tracing_selection(
   let lg = Log::get("export_tracing_selection");
   let default_path = Constants::default_selected_functions_path();
   let path = if let Some(out_path) = output {
+    if skip_tracing_selection(&out_path) {
+      return Ok(());
+    }
     out_path
   } else {
     user_input_or_default(
@@ -211,8 +215,12 @@ pub fn export_tracing_selection(
 pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
   let mut result = Vec::with_capacity(8);
 
-  let mut f =
-    BufReader::new(File::open(path).map_err(|e| anyhow!("import_tracing_seleciton  failed: {e}"))?);
+  let mut f = BufReader::new(File::open(path).map_err(|e| {
+    anyhow!(
+      "import_tracing_seleciton  failed: {e}, path {}",
+      path.display()
+    )
+  })?);
 
   let mut line = String::with_capacity(256);
   while let Ok(len) = f.read_line(&mut line) {
@@ -223,8 +231,8 @@ pub fn import_tracing_selection(path: &Path) -> Result<Vec<TextFunUid>> {
     let mut it = line.trim().split('\x00');
     let module = it.next();
     let function = it.nth(1);
-    ensure!(module.is_some(), "Module name not found in {:?}", line);
-    ensure!(function.is_some(), "Function name not found in {:?}", line);
+    ensure!(module.is_some(), "Module name not found in {line:?}");
+    ensure!(function.is_some(), "Function name not found in {line:?}");
 
     result.push(TextFunUid {
       fn_module: module.unwrap().to_string(),
@@ -304,10 +312,7 @@ pub fn import_call_trace_data(
       );
       result.push((id, fr));
     } else {
-      bail!(
-        "Failed to parse import, invalid format in one of the numbers {:?}",
-        parse_res
-      );
+      bail!("Failed to parse import, invalid format in one of the numbers {parse_res:?}");
     }
   }
 

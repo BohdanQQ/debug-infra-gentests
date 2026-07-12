@@ -1,5 +1,5 @@
 use std::{
-  path::{Path, PathBuf},
+  path::PathBuf,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -199,7 +199,7 @@ pub async fn testing_phase(
               test_count,
               test_case_timeout,
               global_timeout,
-              thread_counts: thread_counts.clone(),
+              call_counts: thread_counts.clone(),
             },
             metadata_svr.clone(),
             results.clone(),
@@ -218,7 +218,7 @@ pub async fn testing_phase(
               test_count,
               test_case_timeout,
               global_timeout,
-              thread_counts: thread_counts.clone(),
+              call_counts: thread_counts.clone(),
             },
             metadata_svr.clone(),
             results.clone(),
@@ -227,19 +227,13 @@ pub async fn testing_phase(
           .await
         }
         args::TestingMode::Criu => {
-          // TODO TODO TODO
-          // TODO TODO TODO
-          // TODO TODO TODO
-          // TODO TODO TODO
           // Require running as root (restoration requires it)
-          // - or allow nonroot but warn regarding the --unpriviliged option usage
-          // (and propagate the info that the option is used)
           let Some(output_gen) = TestOutputPathGen::make(test_output)? else {
             bail!("Output must be specified");
           };
           let output_gen = Arc::new(output_gen);
 
-          let p = CheckpointedTesting::new(common_params.clone(), output_gen, test_count as usize);
+          let p = CheckpointedTesting::new(common_params.clone(), output_gen);
           run_test_case(
             p,
             command.clone(),
@@ -248,7 +242,7 @@ pub async fn testing_phase(
               test_count,
               test_case_timeout,
               global_timeout,
-              thread_counts: thread_counts.clone(),
+              call_counts: thread_counts.clone(),
             },
             metadata_svr.clone(),
             results.clone(),
@@ -262,11 +256,20 @@ pub async fn testing_phase(
   Ok(errors)
 }
 
-pub fn mask_fn_selection(selection_file: &Path, mut modules: ExtModuleMap) -> Result<ExtModuleMap> {
-  //lg.progress("Reading function selection");
-  let selection = import_tracing_selection(selection_file)?;
-  //lg.progress("Masking");
-  modules.mask_include(&selection)?;
+pub fn mask_fn_selection(
+  selection_file: &PathBuf,
+  mut modules: ExtModuleMap,
+) -> Result<ExtModuleMap> {
+  let selection_file = if crate::skip_tracing_selection(selection_file) {
+    None
+  } else {
+    Some(selection_file)
+  };
+  if let Some(file) = selection_file {
+    let selection = import_tracing_selection(file)?;
+    modules.mask_include(&selection)?;
+  }
+
   Ok(modules)
 }
 

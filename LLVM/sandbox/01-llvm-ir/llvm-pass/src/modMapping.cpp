@@ -3,6 +3,8 @@
 #include "argMapping.hpp"
 #include "constants.hpp"
 #include "typeAlias.hpp"
+#include <exception>
+#include <filesystem>
 #include <llvm/ADT/StringRef.h>
 #include "llvm/IR/Function.h"
 #include "llvm/Support/SHA256.h"
@@ -85,6 +87,16 @@ public:
   ModuleMappingEncoding(const std::string &MapsDirectory,
                         const std::string &FileName,
                         const std::string &ModuleName) {
+    if (!MapsDirectory.empty()) {
+      try {
+        std::filesystem::create_directories(MapsDirectory);
+      } catch (std::exception& Err) {
+        llvm::errs() << "Failed modmaps dir createion:" << Err.what() << '\n';
+        setFailed();
+        return;
+      }
+    }
+
     Str Path = MapsDirectory + '/' + FileName;
     if (std::filesystem::exists(Path)) {
       llvm::errs() << "Module ID hash collision! Path:" << Path << '\n';

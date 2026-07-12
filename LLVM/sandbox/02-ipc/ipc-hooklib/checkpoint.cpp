@@ -80,7 +80,8 @@ static std::string criu_err_msg(int ret) {
  */
 static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
                                                 const std::string &criuSockPath,
-                                                const std::string &logId, bool shellJob) {
+                                                const std::string &logId,
+                                                bool shellJob) {
   using err = std::unexpected<std::string>;
   std::filesystem::path logPath;
   try {
@@ -93,7 +94,10 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
     return err("invalid log path - system");
   }
   if constexpr (DBG) {
-    std::cerr << std::format("Configuring Checkpoint\n\tdump dir: {}\n\tcriu socket path: {}\n\tlog id: {}", dumpDir, criuSockPath, logId) << std::endl;
+    std::cerr << std::format("Configuring Checkpoint\n\tdump dir: {}\n\tcriu "
+                             "socket path: {}\n\tlog id: {}",
+                             dumpDir, criuSockPath, logId)
+              << std::endl;
   }
 
   // no local_ options, either way, does not work for now
@@ -121,7 +125,7 @@ static SResult<criu_opts *> configureCheckpoint(const std::string &dumpDir,
     return errmsg("Log path");
   }
   criu_local_set_shell_job(opts, shellJob);
-  criu_local_set_log_level(opts, 4); // max
+  criu_local_set_log_level(opts, 1); // max 4
   // TODO: maybe a limiatation (nested checkpoints report errors)
   // try removing this once everything works
   criu_local_set_network_lock(opts, CRIU_NETWORK_LOCK_SKIP);
@@ -140,8 +144,8 @@ SResult<bool> performCheckpoint(const std::string &criuDumpDir,
                                 uint64_t criuLogId, bool shellJob) {
   std::stringstream idStrStream;
   idStrStream << std::hex << criuLogId;
-  auto cfgRes =
-      configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH, idStrStream.str(), shellJob);
+  auto cfgRes = configureCheckpoint(criuDumpDir, CRIU_SOCKET_PATH,
+                                    idStrStream.str(), shellJob);
   if (!cfgRes) {
     return std::unexpected(cfgRes.error());
   }

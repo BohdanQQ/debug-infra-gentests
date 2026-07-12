@@ -12,7 +12,7 @@ pub fn try_shm_unlink_fd(name: &CStr) -> Result<()> {
     unsafe { shm_unlink(name.as_ptr()) } != -1,
     "Failed to unlink FD {}: {}",
     name.to_string_lossy(),
-    Error::last_os_error().to_string()
+    Error::last_os_error()
   );
   Ok(())
 }

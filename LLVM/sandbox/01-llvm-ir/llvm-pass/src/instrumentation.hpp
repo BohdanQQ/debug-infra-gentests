@@ -1,6 +1,7 @@
 #include "argMapping.hpp"
 #include "constants.hpp"
 #include "modMapping.hpp"
+#include "typeAlias.hpp"
 #include "utility.hpp"
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
@@ -19,7 +20,11 @@
 #include <llvm/IR/Type.h>
 #include "llvm/Pass.h"
 #include <llvm/Passes/OptimizationLevel.h>
+#include <llvm/Support/raw_ostream.h>
 #include <memory>
+#include <regex>
+#include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace common {
@@ -54,9 +59,10 @@ public:
   // which are required by the two instrumentation modes
   struct Config {
     bool useMangledNames{false};
-    std::string modMapsDir;
+    Maybe<Str> modMapsDir;
     bool performFnExitInstrumentation{false};
-    std::string SelectionPath;
+    bool selectingByRegex{false};
+    Str SelectionStr;
   };
 
   virtual ~Instrumentation() = default;
@@ -68,6 +74,7 @@ public:
   virtual bool finish() = 0;
 
 protected:
+  llcap::FunctionId registerFunction(llvm::Function &Fn, Str &DemangledName);
   // module being instrumented
   llvm::Module &m_module;
   IdxMappingInfo m_idxInfo;
@@ -76,17 +83,27 @@ protected:
   // skip the module, instrument() shall not instrument
   bool m_skip{false};
   std::shared_ptr<const Config> m_cfg;
+  FunctionIDMapper m_fnIdMap;
   Instrumentation(llvm::Module &M, std::shared_ptr<const Config> Cfg);
+};
+
+struct InstrInitExc : std::runtime_error {
+  InstrInitExc(const Str &Msg) : std::runtime_error(Msg) {}
 };
 
 class FunctionEntryInstrumentation : public Instrumentation {
 private:
-  FunctionIDMapper m_fnIdMap;
+  Str m_ModMapsDir;
 
 public:
   FunctionEntryInstrumentation(llvm::Module &M,
                                std::shared_ptr<const Config> Cfg)
-      : Instrumentation(M, std::move(Cfg)), m_fnIdMap(M.getModuleIdentifier()) {
+      : Instrumentation(M, std::move(Cfg)) {
+    if (m_cfg->modMapsDir) {
+      m_ModMapsDir = *m_cfg->modMapsDir;
+    } else {
+      m_ModMapsDir = "module-maps";
+    }
     m_ready = true;
   }
 
@@ -101,31 +118,40 @@ public:
   struct IFunctionEndStrategy {
     struct InstrParams {
       common::SFnUidConstants Constants;
-      llvm::Value* TestingFlag; 
+      llvm::Value *TestingFlag;
     };
     // performs function end instrumentation
     // returns false on error
-    virtual bool operator()(llvm::Module &, llvm::Function &, const InstrParams&) = 0;
+    virtual bool operator()(llvm::Module &, llvm::Function &,
+                            const InstrParams &) = 0;
   };
   struct NoOpEndStrategy : IFunctionEndStrategy {
-    bool operator()(llvm::Module & /*unused*/, llvm::Function & /*unused*/, const InstrParams& /* unused */) override {
+    bool operator()(llvm::Module & /*unused*/, llvm::Function & /*unused*/,
+                    const InstrParams & /* unused */) override {
       return true;
     }
   };
 
   struct StopTestOnFnExitStrategy : IFunctionEndStrategy {
-    bool operator()(llvm::Module &Mod, llvm::Function &Fn, const InstrParams& Params) override;
+    bool operator()(llvm::Module &Mod, llvm::Function &Fn,
+                    const InstrParams &Params) override;
   };
 
 private:
   std::unique_ptr<IFunctionEndStrategy> m_fnEndStrategy;
-  llcap::ModuleId m_moduleId;
+  Maybe<std::regex> m_fnNameRe;
+  llcap::ModuleId m_moduleId{0};
   std::map<std::string, llcap::FunctionId> m_tracedFns;
+  Maybe<llcap::FunctionId> checkInstrument(llvm::Function &Fn);
 
 public:
   ArgumentInstrumentation(llvm::Module &M, std::shared_ptr<const Config> Cfg);
 
   void instrument() override;
 
-  bool finish() override { return true; }
+  bool finish() override {
+    std::ignore = FunctionIDMapper::flush(
+        std::move(m_fnIdMap), m_cfg->modMapsDir.value_or("module_maps"));
+    return true;
+  }
 };

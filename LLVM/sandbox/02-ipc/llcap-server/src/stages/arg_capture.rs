@@ -268,7 +268,7 @@ impl PacketReader {
       .captures
       .get(&id)
       .ok_or(anyhow!("Not found in packet reader m/f {id:?}"))
-      .and_then(|v| v.try_lock().map_err(|e| anyhow!("{}", e)))
+      .and_then(|v| v.try_lock().map_err(|e| anyhow!("{e}")))
   }
 
   pub fn read_next_packet(&self, id: NumFunUid) -> Result<Option<Vec<u8>>> {
@@ -343,7 +343,7 @@ impl PacketIterator for CaptureReader {
           self.idx += 1;
           return Ok(None);
         }
-        bail!("Failed to read packet len: {}", e)
+        bail!("Failed to read packet len: {e}")
       }
     }
     let len = u32::from_le_bytes(buf);
@@ -359,7 +359,7 @@ impl PacketIterator for CaptureReader {
         self.idx += 1;
         Ok(Some(result))
       }
-      Err(e) => Err(anyhow!("Error when reading {} packet len, err {}", len, e)),
+      Err(e) => Err(anyhow!("Error when reading {len} packet len, err {e}")),
     }
   }
 

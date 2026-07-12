@@ -1,4 +1,5 @@
 use std::{
+  path::Path,
   sync::{Arc, Mutex},
   time::Duration,
 };
@@ -57,6 +58,10 @@ fn try_meta_svr_arc_deinit(metadata_svr: Arc<Mutex<MetadataPublisher>>) -> Resul
     Err(anyhow!("Failed to unwrap from arc... this is not expected")),
     |ms| ms.into_inner().unwrap().deinit(),
   )
+}
+
+fn skip_tracing_selection(selection_arg: &Path) -> bool {
+  format!("{}", selection_arg.display()) == "skip"
 }
 
 #[allow(clippy::too_many_lines)]
@@ -178,7 +183,7 @@ async fn main() -> Result<()> {
       match tokio::time::timeout(Duration::from_secs(10), ready_rx).await {
         Ok(Ok(())) => lg.trace("Server ready"),
         Err(_) => bail!("server ready timeout"),
-        Ok(Err(e)) => bail!("server ready error: {}", e),
+        Ok(Err(e)) => bail!("server ready error: {e}"),
       }
       let metadata_svr = create_meta_svr(&common_params)?;
 

@@ -233,7 +233,7 @@ Maybe<Vec<size_t>> getCustomTypeIndicies(llvm::StringRef MetadataKey,
         << "Warning - unexpected string metadata node with non-MDString "
            "0th operand!\n";
   } else {
-    VERBOSE_LOG << "No meta key " << MetadataKey << " found\n";
+    DEBUG_LOG << "No meta key " << MetadataKey << " found\n";
   }
   return NONE;
 }

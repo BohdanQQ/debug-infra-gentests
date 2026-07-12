@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::{Result, anyhow, bail, ensure};
+use num_traits::Zero;
 use tokio::{
   io::{AsyncReadExt, BufReader},
   net::{UnixListener, UnixStream, unix::OwnedWriteHalf},
@@ -405,20 +406,19 @@ async fn test_coordinator_case_handler(
     // note: this matcher "passes" only if data is received from the socket
     match timeout(Duration::from_millis(100), buff_stream.read(&mut data)).await {
       Ok(Ok(0)) => {
-        bail!("Client closed connection - ending, state: {:?}", state);
+        bail!("Client closed connection - ending, state: {state:?}");
       }
       Ok(Ok(n)) => {
         if n != data.len() {
           bail!(
-            "Expected {} bytes, got {n} - ending, state: {:?}",
-            data.len(),
-            state
+            "Expected {} bytes, got {n} - ending, state: {state:?}",
+            data.len()
           );
         }
         // we received a message, we continue to message handling
       }
       Ok(Err(e)) => {
-        bail!("Not readable {e} - ending, state: {:?}", state);
+        bail!("Not readable {e} - ending, state: {state:?}");
       }
       Err(_) => {
         // see test_server_job
@@ -674,7 +674,7 @@ impl CheckpointedTesting {
       dump_path.to_string()
     };
 
-    const PIDFILE: &'static str = "/tmp/llcap-criu-pidfile";
+    const PIDFILE: &str = "/tmp/llcap-criu-pidfile";
     // must be removed in order for the PID to get written
     let _ = tokio::fs::remove_file(PIDFILE).await;
 
@@ -927,8 +927,7 @@ fn wait_restored_test(
       test,
       "",
       Some(TestStatus::Fatal(format!(
-        "Failed to read CRIU restore pidfile: {}",
-        e.to_string()
+        "Failed to read CRIU restore pidfile: {e}"
       ))),
     )
   })?;
@@ -938,8 +937,7 @@ fn wait_restored_test(
       test,
       "",
       Some(TestStatus::Fatal(format!(
-        "Failed to parse CRIU restore pidfile: {}",
-        e.to_string()
+        "Failed to parse CRIU restore pidfile: {e}"
       ))),
     )
   })?;
@@ -948,8 +946,7 @@ fn wait_restored_test(
       test,
       "",
       Some(TestStatus::Fatal(format!(
-        "Failed to parse CRIU restore PID: {}",
-        e.to_string()
+        "Failed to parse CRIU restore PID: {e}"
       ))),
     )
   })?;
@@ -958,8 +955,7 @@ fn wait_restored_test(
       test,
       "",
       Some(TestStatus::Fatal(format!(
-        "Failed to wait for CRIU restore PID {test_pid}: {}",
-        e.to_string()
+        "Failed to wait for CRIU restore PID {test_pid}: {e}"
       ))),
     )
   })?;
@@ -1112,6 +1108,7 @@ impl TestOutputPathGen {
   /// Returns (out, err) temporary paths used for restoring
   pub fn store_after_checkpoint(
     &self,
+    ran_from_scratch: bool,
     tst: &TestRegisryItem,
     paths: Option<&CheckpointPaths>,
   ) -> Result<CheckpointPaths> {
@@ -1124,7 +1121,9 @@ impl TestOutputPathGen {
     let temp_err = self.tmp_dir.join(from_err.file_name().unwrap());
 
     // when checkpointing from a restored program, the paths have the -per suffix
-    let expected_out = if std::fs::copy(&from_out, &temp_out).is_ok() {
+    let expected_out = if ran_from_scratch {
+      std::fs::copy(&from_out, &temp_out)
+        .map_err(|e| anyhow!("Checkpoint scratch copy, out: {e}"))?;
       // this is the very first path, all restored programs use this SINGLE path for their outputs
       // - we are merely replacing it in between runs and restoring it before runs
       Some(from_out)
@@ -1134,7 +1133,9 @@ impl TestOutputPathGen {
       // - we are only keeping the copy in the temporary path (for copying into the Some(from_out))
       None
     };
-    let expected_err = if std::fs::copy(&from_err, &temp_err).is_ok() {
+    let expected_err = if ran_from_scratch {
+      std::fs::copy(&from_err, &temp_err)
+        .map_err(|e| anyhow!("Checkpoint scratch copy, err: {e}"))?;
       Some(from_err)
     } else {
       std::fs::copy(&from_err_per, &temp_err).map_err(|e| anyhow!("Checkpoint copy, err: {e}"))?;
@@ -1142,12 +1143,16 @@ impl TestOutputPathGen {
     };
 
     Ok(CheckpointPaths {
-      criu_expected: match paths {
-        Some(x) => x.criu_expected.clone(),
-        None => match (expected_out, expected_err) {
+      criu_expected: if ran_from_scratch {
+        match (expected_out, expected_err) {
           (Some(x), Some(y)) => (x, y),
           _ => bail!("bug"),
-        },
+        }
+      } else {
+        match paths {
+          Some(x) => x.criu_expected.clone(),
+          None => bail!("bug paths"),
+        }
       },
       originals: (temp_out, temp_err),
     })
@@ -1237,7 +1242,7 @@ pub struct PartialRegistryItem {
   pub test_count: u32,
   pub test_case_timeout: Duration,
   pub global_timeout: Option<Duration>,
-  pub thread_counts: Arc<Vec<u64>>,
+  pub call_counts: Arc<Vec<u64>>,
 }
 struct CommonTestingPhaseStore {
   pub test_registry: TestRegistry,
@@ -1296,7 +1301,7 @@ impl TestingPhase for MTSupportTesting {
     let test_count = partial.test_count;
     let timeout_test = partial.test_case_timeout;
     let uid: NumFunUid = partial.uid;
-    let thread_counts = &partial.thread_counts;
+    let thread_counts = &partial.call_counts;
     for (thread_idx, call_count) in thread_counts.iter().enumerate() {
       for call_index in 0..*call_count {
         for packet_index in 0..test_count {
@@ -1394,7 +1399,7 @@ impl TestingPhase for BasicTesting {
     let test_count = partial.test_count;
     let timeout_test = partial.test_case_timeout;
     let uid: NumFunUid = partial.uid;
-    let thread_counts = &partial.thread_counts;
+    let thread_counts = &partial.call_counts;
     for call_idx in 0..test_count {
       tests.push(self.common.test_registry.add_new_test(
         TestRegisryItem {
@@ -1474,8 +1479,8 @@ impl TestingPhase for BasicTesting {
 
 #[derive(Copy, Clone, Debug)]
 enum CheckpointState {
-  Init,
-  Checkpoint(u64),
+  PureStart,
+  Checkpoint(ThreadLidT, CallIndexT),
   End,
 }
 
@@ -1515,29 +1520,23 @@ impl CheckpointPaths {
 
 pub struct CheckpointedTesting {
   common: CommonTestingPhaseStore,
-  last_checkpoint: CheckpointState,
+  upcoming_checkpoint: CheckpointState,
   last_checkpoint_paths: Option<CheckpointPaths>,
   output_generator: Arc<TestOutputPathGen>,
   // test item & the command line
   // presence (as a whole)           => Perform checkpoint
   // presence of command line vector => Start from scratch, don't checkpoint
   // (conversly, restore a checkpoint and retarget if not present)
-  checkpointing_testcase: Option<(TestRegisryItem, Option<Vec<String>>)>,
-  total_call_count: usize,
+  checkpointing_testcase: Option<(TestRegisryItem, Vec<String>)>,
 }
 
 impl CheckpointedTesting {
-  pub fn new(
-    common_params: Arc<CommonStageParams>,
-    out_gen: Arc<TestOutputPathGen>,
-    call_count: usize,
-  ) -> Self {
+  pub fn new(common_params: Arc<CommonStageParams>, out_gen: Arc<TestOutputPathGen>) -> Self {
     Self {
       common: CommonTestingPhaseStore::new(common_params, Arc::new(None)),
-      last_checkpoint: CheckpointState::Init,
+      upcoming_checkpoint: CheckpointState::PureStart,
       checkpointing_testcase: None,
       output_generator: out_gen,
-      total_call_count: call_count,
       last_checkpoint_paths: None,
     }
   }
@@ -1550,67 +1549,32 @@ impl CheckpointedTesting {
     let lg = Log::get("mk_case");
     lg.info(format!(
       "Next from last {:?} partial {partial:?}",
-      self.last_checkpoint
+      self.upcoming_checkpoint
     ));
-    if let CheckpointState::End = self.last_checkpoint {
-      self.checkpointing_testcase = None;
-      return STOP;
-    }
-    let init = self.checkpointing_testcase.is_none();
-    let (n_thread_id, n_call_idx, cmd) = match &self.checkpointing_testcase {
-      None => (0, 0, Some(command.to_vec())),
-      Some((tc, _)) => (tc.thread_lid.0, tc.call_index.0, None),
-    };
 
-    let idx_overflows =
-      partial.thread_counts[usize::try_from(n_thread_id)?] <= u64::from(n_call_idx);
-    let (n_thread_id, n_call_idx) = if idx_overflows {
-      (n_thread_id + 1, 0)
-    } else {
-      (n_thread_id, n_call_idx + u32::from(!init))
+    let (lid, call_idx) = match self.upcoming_checkpoint {
+      CheckpointState::PureStart => (0, 0),
+      CheckpointState::Checkpoint(ThreadLidT(t), CallIndexT(i)) => (t, i),
+      CheckpointState::End => {
+        self.checkpointing_testcase = None;
+        return STOP;
+      }
     };
-
-    if n_thread_id >= partial.thread_counts.len() as u64 {
-      return STOP;
-    }
 
     let item = TestRegisryItem {
       uid: partial.uid,
-      call_index: CallIndexT(match self.last_checkpoint {
-        CheckpointState::Init => {
-          ensure!(
-            0 == n_call_idx,
-            "inconsistent state init, got: {}",
-            n_call_idx
-          );
-          0
-        }
-        CheckpointState::Checkpoint(i) => {
-          ensure!(
-            i == n_call_idx.into(),
-            "inconsistent state next: {}, got: {}",
-            i,
-            n_call_idx
-          );
-          u32::try_from(i)?
-        }
-        CheckpointState::End => bail!("This should not have happened!"),
-      }),
+      call_index: CallIndexT(call_idx),
       // "DC" = disregard / "don't care"
       packet_index: PacketIndexT(0), // DC
-      thread_lid: ThreadLidT(n_thread_id),
-      thread_count: u32::try_from(partial.thread_counts.len())?,
+      thread_lid: ThreadLidT(lid),
+      thread_count: u32::try_from(partial.call_counts.len())?,
       test_count: 0,                           // DC
       timeout_test: partial.test_case_timeout, // this should be "DC"
       timeout_process: partial.global_timeout,
       mode: stages::test_registry::TestingMode::CheckpointedTesting(true),
     };
 
-    ensure!(
-      cmd.is_some() || self.checkpointing_testcase.is_some(),
-      "Unwrap guard"
-    );
-    let mut new_ctcase = Some((item, cmd));
+    let mut new_ctcase = Some((item, command.to_vec()));
     mem::swap(&mut self.checkpointing_testcase, &mut new_ctcase);
 
     lg.trace(format!("{:?}", self.checkpointing_testcase));
@@ -1636,12 +1600,13 @@ impl TestingPhase for CheckpointedTesting {
     let test_count = partial.test_count;
     let timeout_test = partial.test_case_timeout;
     let uid: NumFunUid = partial.uid;
-    let thread_counts = &partial.thread_counts;
+    let call_counts = &partial.call_counts;
 
     let thread_lid = tc.0.thread_lid;
     // if checkpoint restore takes place, be sure to skip the right amount of calls
     let skip = tc.0.call_index.0;
-    if usize::try_from(skip)? == self.total_call_count {
+    let max_calls_in_lid = call_counts[thread_lid.0 as usize];
+    if skip as u64 >= max_calls_in_lid {
       return STOP;
     }
 
@@ -1652,7 +1617,7 @@ impl TestingPhase for CheckpointedTesting {
           call_index: CallIndexT(skip),
           packet_index: PacketIndexT(packet_index.into()),
           thread_lid,
-          thread_count: u32::try_from(thread_counts.len())?,
+          thread_count: u32::try_from(call_counts.len())?,
           test_count,
           timeout_test,
           timeout_process: Some(timeout_test),
@@ -1663,16 +1628,24 @@ impl TestingPhase for CheckpointedTesting {
     }
 
     // prepare for the next round
-    self.last_checkpoint = match self.last_checkpoint {
-      CheckpointState::Init => CheckpointState::Checkpoint(1),
-      CheckpointState::Checkpoint(i) => {
-        if usize::try_from(i)? >= self.total_call_count {
-          CheckpointState::End
+    let candidate_checkpoint = match self.upcoming_checkpoint {
+      CheckpointState::PureStart => Some((0, 1)),
+      CheckpointState::Checkpoint(ThreadLidT(t), CallIndexT(i)) => Some((t, i + 1)),
+      CheckpointState::End => None,
+    };
+    self.upcoming_checkpoint = match candidate_checkpoint {
+      None => CheckpointState::End,
+      Some((t, i)) => {
+        if i as u64 >= call_counts[t as usize] {
+          if t as usize + 1 >= call_counts.len() {
+            CheckpointState::End
+          } else {
+            CheckpointState::Checkpoint(ThreadLidT(t + 1), CallIndexT(0))
+          }
         } else {
-          CheckpointState::Checkpoint(i + 1)
+          CheckpointState::Checkpoint(ThreadLidT(t), CallIndexT(i))
         }
       }
-      CheckpointState::End => self.last_checkpoint,
     };
     Ok(true)
   }
@@ -1692,10 +1665,12 @@ impl TestingPhase for CheckpointedTesting {
 
       let (tst, cmd) = &self.checkpointing_testcase.as_ref().unwrap();
 
-      let checkpoint_mode = cmd.as_ref().map_or(
-        CheckpointJobMode::Restore(tst.call_index.0 as usize),
-        |cmdline| CheckpointJobMode::New(cmdline, tst.call_index.0 as usize),
-      );
+      let run_from_scratch = tst.call_index.0.is_zero();
+      let checkpoint_mode = if run_from_scratch {
+        CheckpointJobMode::New(cmd, tst.call_index.0 as usize)
+      } else {
+        CheckpointJobMode::Restore(tst.call_index.0 as usize)
+      };
 
       lg.trace(format!("Starting checkpoint in mode {checkpoint_mode:?}"));
       let test_job = self.singular_checkpointing_job(meta.clone(), tst, checkpoint_mode);
@@ -1709,11 +1684,11 @@ impl TestingPhase for CheckpointedTesting {
         _ => (),
       }
 
-      self.last_checkpoint_paths = Some(
-        self
-          .output_generator
-          .store_after_checkpoint(tst, self.last_checkpoint_paths.as_ref())?,
-      );
+      self.last_checkpoint_paths = Some(self.output_generator.store_after_checkpoint(
+        run_from_scratch,
+        tst,
+        self.last_checkpoint_paths.as_ref(),
+      )?);
       lg.trace(format!(
         "Commited checkpoint paths: {:?}",
         self.last_checkpoint_paths
@@ -1767,8 +1742,8 @@ impl TestingPhase for CheckpointedTesting {
   }
 
   fn next_batch(&self) -> Option<()> {
-    match self.last_checkpoint {
-      CheckpointState::Init | CheckpointState::Checkpoint(_) => Some(()),
+    match self.upcoming_checkpoint {
+      CheckpointState::PureStart | CheckpointState::Checkpoint(_, _) => Some(()),
       CheckpointState::End => None,
     }
   }

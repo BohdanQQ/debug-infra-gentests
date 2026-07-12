@@ -79,8 +79,7 @@ impl Semaphore {
           let err = Error::last_os_error();
           ensure!(
             res != -1 || err.raw_os_error() == Some(ETIMEDOUT),
-            "Failed timedwait on semaphore: {}",
-            err
+            "Failed timedwait on semaphore: {err}"
           );
           Ok(err.raw_os_error() != Some(ETIMEDOUT))
         } else {

@@ -45,9 +45,11 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <exception>
 #include <fstream>
 #include <ios>
 #include <memory>
+#include <regex>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -919,7 +921,7 @@ collectTracedFunctionsForModule(Module &M, const Str &SelectionPath) {
 
 Instrumentation::Instrumentation(llvm::Module &M,
                                  std::shared_ptr<const Config> Cfg)
-    : m_module(M), m_cfg(std::move(Cfg)) {
+    : m_module(M), m_cfg(std::move(Cfg)), m_fnIdMap(M.getModuleIdentifier()) {
   if (auto MbInfo = IdxMappingInfo::parseFromModule(m_module); MbInfo) {
     m_idxInfo = *MbInfo;
     m_skip = false;
@@ -928,6 +930,13 @@ Instrumentation::Instrumentation(llvm::Module &M,
     // pessimistic
     m_skip = true;
   }
+}
+
+llcap::FunctionId Instrumentation::registerFunction(llvm::Function &Fn,
+                                                    Str &DemangledName) {
+  ClangMetadataToLLVMArgumentMapping Mapping =
+      common::createArgumentMapping(Fn, m_idxInfo);
+  return m_fnIdMap.addFunction(DemangledName, Mapping);
 }
 
 void FunctionEntryInstrumentation::instrument() {
@@ -975,9 +984,7 @@ void FunctionEntryInstrumentation::instrument() {
       }
     }
 
-    ClangMetadataToLLVMArgumentMapping Mapping =
-        common::createArgumentMapping(Fn, m_idxInfo);
-    const auto FunId = m_fnIdMap.addFunction(DemangledName, Mapping);
+    const auto FunId = registerFunction(Fn, DemangledName);
 
     auto Constants = common::SFnUidConstants::getModFunIdConstants(
         m_fnIdMap.getModuleMapIntId(), m_module, FunId);
@@ -987,9 +994,7 @@ void FunctionEntryInstrumentation::instrument() {
 }
 
 bool FunctionEntryInstrumentation::finish() {
-  auto ModMapsDir =
-      m_cfg->modMapsDir.empty() ? "module-maps" : m_cfg->modMapsDir;
-  return FunctionIDMapper::flush(std::move(m_fnIdMap), ModMapsDir);
+  return FunctionIDMapper::flush(std::move(m_fnIdMap), m_ModMapsDir);
 }
 
 ArgumentInstrumentation::ArgumentInstrumentation(
@@ -1003,15 +1008,46 @@ ArgumentInstrumentation::ArgumentInstrumentation(
         std::make_unique<ArgumentInstrumentation::NoOpEndStrategy>();
   }
 
-  auto TracedFns =
-      argCapture::collectTracedFunctionsForModule(M, m_cfg->SelectionPath);
-  if (!TracedFns) {
-    m_ready = false;
+  if (m_cfg->selectingByRegex) {
+    try {
+      m_fnNameRe = std::regex(m_cfg->SelectionStr);
+      m_ready = true;
+    } catch (std::exception &Err) {
+      throw InstrInitExc(Str("Regex: ") + Err.what());
+    }
   } else {
+    auto TracedFns =
+        argCapture::collectTracedFunctionsForModule(M, m_cfg->SelectionStr);
+    if (!TracedFns) {
+      throw InstrInitExc(Str("Selection wrong: ") + m_cfg->SelectionStr);
+    }
     m_moduleId = TracedFns->first;
     m_tracedFns = std::move(TracedFns->second);
     m_ready = true;
   }
+}
+
+Maybe<llcap::FunctionId>
+ArgumentInstrumentation::checkInstrument(Function &Fn) {
+  StringRef MangledName = Fn.getFunction().getName();
+  Str DemangledName = llvm::demangle(MangledName);
+  Maybe<llcap::FunctionId> Result;
+  if (m_fnNameRe) {
+    if (std::regex_search(DemangledName, *m_fnNameRe)) {
+      Result = registerFunction(Fn, DemangledName);
+    }
+  } else {
+    auto FnId = m_tracedFns.find(DemangledName);
+    if (FnId != m_tracedFns.end()) {
+      Result = FnId->second;
+    }
+  }
+  if (Result) {
+    llvm::errs() << "Function " << DemangledName << " matches, ID: " << Result
+                 << '\n';
+  }
+
+  return Result;
 }
 
 void ArgumentInstrumentation::instrument() {
@@ -1026,20 +1062,15 @@ void ArgumentInstrumentation::instrument() {
   }
 
   for (Function &Fn : m_module) {
-    StringRef MangledName = Fn.getFunction().getName();
-    Str DemangledName = llvm::demangle(MangledName);
-
-    auto FnId = m_tracedFns.find(DemangledName);
-    if (FnId == m_tracedFns.end()) {
-      DEBUG_LOG << "Skipping fn " << DemangledName << "\n";
+    auto MbFnId = checkInstrument(Fn);
+    if (!MbFnId) {
       continue;
     }
-    VERBOSE_LOG << "Instrumenting fn " << DemangledName << "\n";
-
+    auto FnId = *MbFnId;
     BasicBlock &EntryBB = Fn.getEntryBlock();
     IRBuilder<> Builder(&EntryBB.front());
     auto Constants = common::SFnUidConstants::getModFunIdConstants(
-        m_moduleId, m_module, FnId->second);
+        m_fnIdMap.getModuleMapIntId(), m_module, FnId);
 
     ClangMetadataToLLVMArgumentMapping Mapping =
         common::createArgumentMapping(Fn, m_idxInfo);
