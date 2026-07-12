@@ -2,6 +2,7 @@
 set -x
 
 function run-test {
+  set +e
   TestDir=$1; shift;
   OutTestScript="$(pwd)"/"$1"; shift;
   TestedFnName=$1;shift;
@@ -9,7 +10,8 @@ function run-test {
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
   MTMode=$1; shift
-  ExtraArgs=$*;
+  ExtraArgs=$*; shift;
+  set -e
 
   IRTestScript="$OutTestScript"/ir;
   cd ../
@@ -35,53 +37,64 @@ function run-test {
 }
 
 function run-test-in-directory-custom-buffers {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
+
   run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" ""
   run-test-in-directory-custom-buffers-mt "$TestDir" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
 }
 
 function run-test-in-directory-custom-buffers-mt {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
   run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support
 }
 
 
 function run-test-in-dir-fnend-instr-criu {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
   
   run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "criu" -mllvm -llcap-instrument-fn-exit
 }
 
 
 function run-test-in-directory-fn-end-instr {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
   
   run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" "" -mllvm -llcap-instrument-fn-exit
   run-test-in-directory-fn-end-instr-mt "$TestDir" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt"
 }
 
 function run-test-in-directory-fn-end-instr-mt {
+  set +e
   TestDir=$1; shift;
   TestedFnName=$1;shift;
   Timeout=$1; shift;
   LlcapBufSz=$1; shift
   LlcapBufCnt=$1; shift
+  set -e
   
   run-test "$TestDir" "../$TestDir/cases" "$TestedFnName" "$Timeout" "$LlcapBufSz" "$LlcapBufCnt" mt-support -mllvm -llcap-instrument-fn-exit
 }
