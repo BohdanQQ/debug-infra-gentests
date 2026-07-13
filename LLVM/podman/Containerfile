@@ -8,10 +8,7 @@ WORKDIR /opt/llcap
 # improvement: make repo-name-agnostic
 RUN git clone "https://github.com/BohdanQQ/debug-infra-gentests.git"
 WORKDIR /opt/llcap/debug-infra-gentests
-RUN git checkout "thesis/checkpointing"
-
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM
-RUN git submodule update --init --depth=1 ./sandbox/llvm-project
+RUN git checkout "thesis/main"
 
 # Hook library
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
@@ -25,15 +22,19 @@ RUN cargo b --release
 RUN cargo install --root ./ --path ./
 RUN cargo clean
 
+# pull LLVM project
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM
+RUN git submodule update --init --depth=1 ./sandbox/llvm-project
+
 # apply our LLVM patch
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/llvm-project
 RUN git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
 
-# AST plugin
+# set up (AST plugin)
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/custom-metadata-pass
 RUN ./setup-tool.sh
 
-# build
+# LLVM build
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox
 RUN ./setup-llvm-build.sh
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/build
@@ -72,6 +73,8 @@ WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests/test
 RUN ./run-all-tests.sh
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests
 RUN ./clean-all.sh || true
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/report/mt-demo/
+RUN ./run-mt-demo.sh
 
 FROM fedora:42
 # installing from install_manifest.txt (https://github.com/docker/for-linux/issues/1060) also yields multi-GB image, therefore copying it all
