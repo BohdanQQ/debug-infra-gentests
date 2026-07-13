@@ -9,7 +9,7 @@ Note that checkpointing implementation requires root (true root, this cannot be 
 
 Outputs are generated in `./results/` directory.
 
-Timing on the author's machine:
+Timing on the author's machine (all tests ran on a QEMU VM, Fedora Workstation 41 Guest, NixOS 25.11 `nixpkgs` rev `d6df3513510aa548c83868fd22bfddd0a8c0a0d4` host):
 
 non-checkpointing: ~39 seconds
 checkpointing: ~26 seconds
