@@ -1,57 +1,71 @@
 FROM fedora:42
 
-# dependencies for LLVM
-RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools
+# 1. Install dependencies with DNF cache mount
+RUN --mount=type=cache,target=/var/cache/dnf \
+  dnf install -y git make cmake ninja-build xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu-devel screen cargo lld ccache
 
-# research project repo location
+# 2. Clone and lock to base LLVM commit
 WORKDIR /opt/llcap
+RUN git clone "https://github.com/BohdanQQ/debug-infra-gentests.git"
+WORKDIR /opt/llcap/debug-infra-gentests
+RUN git checkout "d1405f4e9d1f692ca1423c6ddf31beff8cf8495c"
 
-# to allow invalidation of cache
-ARG BUILDCLONE=cached
-RUN git clone "https://gitlab.mff.cuni.cz/vasutro/research-project.git"
-WORKDIR /opt/llcap/research-project
+# 3. Setup and build LLVM
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 RUN git submodule update --init --depth=1 ./sandbox/llvm-project
 
-# apply our LLVM patch
-WORKDIR /opt/llcap/research-project/sandbox/llvm-project
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/llvm-project
 RUN git apply ../01-llvm-ir/clang-ir-mapping-llvm.diff
 
-# build
-WORKDIR /opt/llcap/research-project/sandbox
-RUN ./setup-llvm-build.sh
-WORKDIR /opt/llcap/research-project/sandbox/build
-RUN ninja -j $(nproc)
-
-RUN ninja install
-
-ARG NONLLVMUPDATE=cached
-WORKDIR /opt/llcap/research-project
-RUN git pull
-
-# AST plugin
-WORKDIR /opt/llcap/research-project/sandbox/01-llvm-ir/custom-metadata-pass
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/custom-metadata-pass
 RUN ./setup-tool.sh
 
-WORKDIR /opt/llcap/research-project/sandbox/build
-RUN ninja -j $(nproc)
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox
+RUN ./setup-llvm-build.sh
 
-RUN ninja install
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/build
+RUN ninja -j $(nproc) && \
+  ninja install && \
+  ninja tools/clang/examples/ast-meta-add/install/local
 
-# IR plugin
-WORKDIR /opt/llcap/research-project/sandbox/01-llvm-ir/llvm-pass
-RUN cmake ./
-RUN make -j $(nproc)
+RUN mkdir -p /opt/manifest/ && cp install_manifest.txt /opt/manifest/install_manifest.txt
 
-# Hook library
-WORKDIR /opt/llcap/research-project/sandbox/02-ipc/ipc-hooklib
-RUN cmake ./
-RUN make -j $(nproc)
+# 4. Cache breaker for your custom code
+ARG LLCAP_PROJECT_COMMIT="d1405f4e9d1f692ca1423c6ddf31beff8cf8495c"
+WORKDIR /opt/llcap/debug-infra-gentests
+RUN git fetch --all && \
+  git checkout "$LLCAP_PROJECT_COMMIT" && \
+  # Only try to pull if we checked out a branch. If we checked out a commit hash, ignore the pull.
+  if git symbolic-ref -q HEAD; then git pull origin "$LLCAP_PROJECT_COMMIT"; fi
 
-# dependencies for llcap-server
-WORKDIR /opt/llcap/research-project/sandbox/02-ipc/llcap-server
-RUN dnf install -y cargo
-RUN cargo b
-RUN cargo b --release
+# 5. Build Hook library
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
+RUN cmake ./ && make -j $(nproc)
 
-WORKDIR /opt/llcap/research-project/sandbox/02-ipc/example-arg-replacement
-CMD bash
+# 6. Build llcap-server 
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server
+RUN --mount=type=cache,target=/root/.cargo/registry \
+  --mount=type=cache,target=/opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server/target \
+  cargo b --release && \
+  cargo install --root ./ --path ./
+
+# 7. Build IR plugin
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass
+RUN cmake ./ && make -j $(nproc)
+
+# 8. Setup test binaries
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc
+RUN mkdir -p ./llcap-server/target/debug/ && \
+  cp ./llcap-server/bin/llcap-server ./llcap-server/target/debug
+
+# 9. Run tests
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests/test
+RUN ./run-all-tests.sh
+
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests
+RUN ./clean-all.sh || true
+
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/report/mt-demo/
+RUN ./run-mt-demo.sh
+
+CMD ["bash"]

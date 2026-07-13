@@ -1,6 +1,8 @@
-FROM fedora:42 as BUILD
+FROM fedora:42 as LLVM_BUILDER
 
-RUN dnf install -y git make cmake ninja xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu-devel screen cargo
+RUN --mount=type=cache,target=/var/cache/dnf \
+  dnf install -y lld ccache git make cmake ninja xargs clang clang++ @development-tools protobuf-compiler protobuf protobuf-devel criu-devel screen cargo && \
+  dnf clean all -y
 
 # repo location
 WORKDIR /opt/llcap
@@ -8,19 +10,8 @@ WORKDIR /opt/llcap
 # improvement: make repo-name-agnostic
 RUN git clone "https://github.com/BohdanQQ/debug-infra-gentests.git"
 WORKDIR /opt/llcap/debug-infra-gentests
-RUN git checkout "thesis/main"
-
-# Hook library
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
-RUN cmake ./
-RUN make -j $(nproc)
-
-# llcap-server
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server
-RUN cargo b
-RUN cargo b --release
-RUN cargo install --root ./ --path ./
-RUN cargo clean
+# "thesis/main" - locked
+RUN git checkout "d1405f4e9d1f692ca1423c6ddf31beff8cf8495c"
 
 # pull LLVM project
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
@@ -37,56 +28,81 @@ RUN ./setup-tool.sh
 # LLVM build
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox
 RUN ./setup-llvm-build.sh
+
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/build
-RUN ninja -j $(nproc)
-
-RUN ninja install
-RUN ninja tools/clang/examples/ast-meta-add/install/local
-
-RUN mkdir -p /opt/manifest/ && cp install_manifest.txt /opt/manifest/install_manifest.txt
-RUN ninja clean
+RUN ninja -j $(nproc) && \
+  ninja install && \
+  ninja tools/clang/examples/ast-meta-add/install/local&& \
+  mkdir -p /opt/manifest/ && cp install_manifest.txt /opt/manifest/install_manifest.txt && \
+  ninja clean
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox
-RUN rm -rf ./llvm-project/*
+RUN rm -rf ./llvm-project/* && \
+  rm -rf ./build/*
 
-WORKDIR /opt/llcap/debug-infra-gentests/LLVM
-# to allow cache invalidation for non-llvm changes (use on your own risk)
-ARG LLCAP_PROJECT_COMMIT="use-pulled"
-RUN git pull
-RUN if [ "$LLCAP_PROJECT_COMMIT" != "use-pulled" ]; then git checkout "$LLCAP_PROJECT_COMMIT"; fi
+FROM LLVM_BUILDER as TOOLS_BUILDER
+
+WORKDIR /opt/llcap/debug-infra-gentests
+# Breaks the Tools built - llvm-project remains
+ARG LLCAP_PROJECT_COMMIT="d1405f4e9d1f692ca1423c6ddf31beff8cf8495c"
+RUN git fetch --all && \
+  git checkout "$LLCAP_PROJECT_COMMIT" && \
+  # Only try to pull if we checked out a branch. If we checked out a commit hash, ignore the pull.
+  if git symbolic-ref -q HEAD; then git pull origin "$LLCAP_PROJECT_COMMIT"; fi
+
+# Hook library
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/ipc-hooklib
+RUN cmake ./ && make -j $(nproc)
+
+# llcap-server
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server
+RUN --mount=type=cache,target=/root/.cargo/registry \
+  --mount=type=cache,target=/opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/llcap-server/target \
+  cargo b && cargo b --release && \
+  cargo install --root ./ --path ./
 
 # IR plugin
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/01-llvm-ir/llvm-pass
-RUN cmake ./
-RUN make -j $(nproc)
-
-# Remove redundancies
-RUN rm -rf /opt/llcap/debug-infra-gentests/LLVM/.git/
-# (tested with the example-arg-replacement demo)
-RUN find /usr/local/bin/* -not -name 'clang' -not -name 'clang++' -not -name 'clang-21' -delete
+RUN cmake ./ &&  make -j $(nproc)
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc
-RUN mkdir -p ./llcap-server/target/debug/
-RUN cp ./llcap-server/bin/llcap-server ./llcap-server/target/debug
+RUN mkdir -p ./llcap-server/target/debug/ && \
+  cp ./llcap-server/bin/llcap-server ./llcap-server/target/debug
+
+# Testing
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests/test
 RUN ./run-all-tests.sh
+
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/e2e-tests
 RUN ./clean-all.sh || true
+
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/report/mt-demo/
 RUN ./run-mt-demo.sh
 
+# TODO fix
+WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/example-arg-replacement
+RUN ./check-podman-demo.sh
+
+# final cleanup
+# Remove redundancies
+# (tested with the example-arg-replacement demo - be sure to change clang-21 if llvm-project changes)
+RUN rm -rf /opt/llcap/debug-infra-gentests/LLVM/.git/ && \
+  find /usr/local/bin/* -not -name 'clang' -not -name 'clang++' -not -name 'clang-21' -delete
+
 FROM fedora:42
 # installing from install_manifest.txt (https://github.com/docker/for-linux/issues/1060) also yields multi-GB image, therefore copying it all
-COPY --from=BUILD /usr/local/ /usr/local/
+COPY --from=TOOLS_BUILDER /usr/local/ /usr/local/
 
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM
 # clang, etc for C & C++ standard library
-RUN dnf install -y make cmake clang clang++ protobuf-compiler protobuf protobuf-devel criu-devel screen
-RUN dnf clean all -y
+RUN --mount=type=cache,target=/var/cache/dnf \
+  dnf install -y make cmake clang clang++ protobuf-compiler protobuf protobuf-devel criu-devel screen && \
+  dnf clean all -y
 # improvement: can we limit this copy to LLVM only?
-COPY --from=BUILD /opt/llcap/debug-infra-gentests/* /opt/llcap/debug-infra-gentests/LLVM
+COPY --from=TOOLS_BUILDER /opt/llcap/debug-infra-gentests/* /opt/llcap/debug-infra-gentests/LLVM
 
+# TODO fix
 WORKDIR /opt/llcap/debug-infra-gentests/LLVM/sandbox/02-ipc/example-arg-replacement
 RUN ./check-podman-demo.sh
 
