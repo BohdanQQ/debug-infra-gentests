@@ -17,6 +17,9 @@ cmake \
     -DLLVM_BUILD_EXAMPLES=OFF \
     -DCLANG_PLUGIN_SUPPORT=ON \
     -DCLANG_INCLUDE_TESTS=ON \
-    -DCLANG_BUILD_EXAMPLES=ON
+    -DCLANG_BUILD_EXAMPLES=ON \
+    -DLLVM_USE_LINKER=lld
 
+# slow incremental build might also need
+# DBUILD_SHARED_LIBS=ON
 cd ../
