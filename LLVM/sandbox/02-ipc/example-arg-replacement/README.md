@@ -13,9 +13,14 @@ or
 
 * the demo container available on [Docker Hub](https://hub.docker.com/r/vasutro/llcap-demo-env)
 
-        podman run -it docker.io/vasutro/llcap-demo-env:2.0.0
+        podman run -it docker.io/vasutro/llcap-demo-env:3.0.0
 
 ## Workflow
+
+### Deprecated
+
+Reading is encouraged, but the demo source is in the [check-podman-demo.sh](./check-podman-demo.sh) script.
+Using the latest features of the ACF (bypassing call tracing for example). 
 
 We will divide the functionality we demo here into two parts: argument replacement of *primitive* types that is visible on program exit code and argument replacement of *custom* (more dynamic) types observable in the standard output.
 

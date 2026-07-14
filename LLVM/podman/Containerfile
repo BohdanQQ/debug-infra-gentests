@@ -44,7 +44,7 @@ FROM LLVM_BUILDER as TOOLS_BUILDER
 
 WORKDIR /opt/llcap/debug-infra-gentests
 # Breaks the Tools built - llvm-project remains
-ARG LLCAP_PROJECT_COMMIT="d1405f4e9d1f692ca1423c6ddf31beff8cf8495c"
+ARG LLCAP_PROJECT_COMMIT="2d4ba16ec97c5fab8d14c3b6a6d8492f2e053331"
 RUN git fetch --all && \
   git checkout "$LLCAP_PROJECT_COMMIT" && \
   # Only try to pull if we checked out a branch. If we checked out a commit hash, ignore the pull.
