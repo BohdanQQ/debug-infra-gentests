@@ -39,6 +39,7 @@ mkdir -p "$modmaps"
 set +x
 echo "now do the following manually:"
 echo "  cd $yaga"
+echo "  rm -rf build-release (if needed)"
 echo "  mkdir build-release"
 echo "  cd build-release"
 echo "  and use the cmake command"
@@ -60,7 +61,10 @@ cd -
 
 set +x
 echo "call tracing done"
-echo "now do (in $yaga/build-release)"
+echo "now do (in $yaga)"
+echo "  rm -rf build-release (if needed)"
+echo "  mkdir build-release"
+echo "  cd build-release"
 echo "  cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=$yaga/argtrace-wrapper.sh .."
 echo "  make -j3"
 echo "  and press ENTER"
