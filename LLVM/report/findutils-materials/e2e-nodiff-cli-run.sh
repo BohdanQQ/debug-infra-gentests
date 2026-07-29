@@ -52,13 +52,14 @@ cd ../../sandbox/02-ipc/llcap-server
 
 export LD_LIBRARY_PATH="$fixpath"
 
-echo "N:visit" |  cargo r --release -- --modmap "$modmaps" trace-calls -o "$fixpath/selection.bin" "$findutils/find/find" /home -name '*.java' -print
+echo "N:inside_dir" |  cargo r --release -- --modmap "$modmaps" trace-calls -o "$fixpath/selection.bin" "$findutils/find/find" /etc/systemd -name '*.conf' -print
 
 cd -
 
 set +x
 echo "call tracing done"
 echo "now do (in $findutils)"
+echo "  ./configure CC=gcc"
 echo "  make CC=$findutils/argtrace-wrapper.sh"
 echo "  and press ENTER"
 
@@ -76,7 +77,7 @@ findbin="$findutils/find/find"
 rm -rf "$capture"
 
 # blanket run to create the file structure
-cargo r --release -- -vvvv --modmap "$modmaps" capture-args -s "$selection" -o "$capture" "$findbin" /home -name '*.java' -print
+cargo r --release -- -vvvv --modmap "$modmaps" capture-args -s "$selection" -o "$capture" "$findbin" /etc/systemd -name '*.conf' -print
 
-cargo r --release -- -vvvv --modmap "$modmaps" test -s "$selection" -c "$capture" "$findbin" /home -name '*.java' -print
+cargo r --release -- -vvvv --modmap "$modmaps" test -s "$selection" -c "$capture" "$findbin" /etc/systemd -name '*.conf' -print
 
