@@ -1,6 +1,7 @@
 #include "instrumentation.hpp"
 
 #include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "Config.hpp"
 #include "argMapping.hpp"
 #include "constants.hpp"
 #include "modMapping.hpp"
@@ -52,7 +53,6 @@
 #include <regex>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 
 using namespace llvm;
@@ -81,46 +81,18 @@ CallInst *insertTestPrintCall(IRBuilder<> &Builder, Module &M, StringRef Name,
 namespace common {
 namespace {
 
-// data helping to implement custom type support
-
-struct SCustomTypeDescription {
-  // the exact name of the hook as available in the hooklib
-  const char *m_hookFnName;
-  // display name that may appear in log entries
-  const char *m_log_name;
-};
-
-// maps metadata key (correspoding to a custom type) to the size of the type
-// argument, for custom types, LLSZ_CUSTOM is the only one valid at this point
-// and instrumentation is done via pointer/reference
-const std::unordered_map<const char *, LlcapSizeType> SCustomSizes{
-    {LLCAP_TYPE_STD_STRING, LlcapSizeType::LLSZ_CUSTOM},
-    {LLCAP_TYPE_STD_VECINT, LlcapSizeType::LLSZ_CUSTOM},
-    {LLCAP_TYPE_STD_VECSTR, LlcapSizeType::LLSZ_CUSTOM},
-    // invalid size means
-    // that this type index is just a "flag" and
-    // has no effect on the "real argument size" that the instrumentation will
-    // work with
-    {LLCAP_UNSIGNED_IDCS, LlcapSizeType::LLSZ_INVALID}};
-
-const std::unordered_map<const char *, SCustomTypeDescription> SCustomHooks{
-    {LLCAP_TYPE_STD_STRING,
-     SCustomTypeDescription{.m_hookFnName = "llcap_hooklib_extra_cxx_string",
-                            .m_log_name = "std::string"}},
-    {LLCAP_TYPE_STD_VECINT,
-     SCustomTypeDescription{.m_hookFnName = "llcap_vector_cint",
-                            .m_log_name = "std::vector<int>"}},
-    {LLCAP_TYPE_STD_VECSTR,
-     SCustomTypeDescription{.m_hookFnName = "llcap_vector_stdstring",
-                            .m_log_name = "std::vector<string>"}}};
-
 // creates argument index mapping for a particular function, taking into account
 // all of the above-registered custom type metadata keys
 ClangMetadataToLLVMArgumentMapping
-createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo) {
+createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo,
+                      const Map<Str, FnHookDesc> &Config) {
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
-  for (auto &&[key, size] : SCustomSizes) {
-    Mapping.registerCustomTypeIndicies(key, size);
+  for (auto &&[key, entry] : Config) {
+    DEBUG_LOG << "Registering " << key << " entry: " << entry.name << " is "
+                 << (entry.isInvalidLlcapSize ? "invalid" : "valid") << '\n';
+    Mapping.registerCustomTypeIndicies(key, entry.isInvalidLlcapSize
+                                                ? LlcapSizeType::LLSZ_INVALID
+                                                : LlcapSizeType::LLSZ_CUSTOM);
   }
   return Mapping;
 }
@@ -207,7 +179,7 @@ void insertFnEntryHook(IRBuilder<> &Builder, Module &M,
 
 namespace argCapture {
 
-Instruction *splitInvokeInsn(Function &Fn, Module &M, InvokeInst &Insn,
+Instruction *splitInvokeInsn(Function &Fn, InvokeInst &Insn,
                              BasicBlock *ExceptionBB, Value *Condition) {
   Instruction *RetVal = nullptr;
 
@@ -536,8 +508,7 @@ bool handleFunctionEndings(llvm::Function &Fn, SkipSetT &InstsToSkip,
         continue;
       }
 
-      const auto *Skip =
-          splitInvokeInsn(Fn, Module, Insn, ExceptionBB, TestingFlag);
+      const auto *Skip = splitInvokeInsn(Fn, Insn, ExceptionBB, TestingFlag);
 
       InstsToSkip.insert(InstPtr);
       if (nullptr != Skip) {
@@ -667,8 +638,8 @@ void instrumentArgHijack(IRBuilder<> &Builder, Module &M, Argument *Arg,
   }
 }
 
-FunctionCallee getOrInsertHookFn(const char *HookName, Type *TypePtr, Module &M,
-                                 LLVMContext &Ctx) {
+FunctionCallee getOrInsertHookFn(std::string_view HookName, Type *TypePtr,
+                                 Module &M, LLVMContext &Ctx) {
   return M.getOrInsertFunction(
       HookName,
       FunctionType::get(Type::getVoidTy(Ctx),
@@ -711,9 +682,13 @@ bool tryInsertIntegerArgCapture(
 
   auto IsAttrUnsgined = Mapping.llvmArgNoMatches(ArgNum, LLCAP_UNSIGNED_IDCS);
   auto ThisArgSize = Sizes[ArgNum].second;
+  IF_DEBUG {  
+    errs() << " arg:\n";
+    Arg->dump();
+  }
   if (!isValid(ThisArgSize)) {
-    errs()
-        << "Encountered an invalid argument size specifier, cannot instrument";
+    errs() << "Encountered an invalid argument size specifier "
+           << to_underlying(ThisArgSize) << ", cannot instrument";
     IF_VERBOSE {
       errs() << " arg:\n";
       Arg->dump();
@@ -750,9 +725,10 @@ bool tryInsertIntegerArgCapture(
 void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
                           const common::SFnUidConstants &C, Argument *Arg,
                           const ClangMetadataToLLVMArgumentMapping &Mapping,
-                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes) {
+                          const Vec<Pair<size_t, LlcapSizeType>> &Sizes,
+                          const Config &Cfg) {
   auto &Ctx = M.getContext();
-  auto GetOrInsertHookFn = [&](const char *HookName, Type *TypePtr) {
+  auto GetOrInsertHookFn = [&](std::string_view HookName, Type *TypePtr) {
     return getOrInsertHookFn(HookName, TypePtr, M, Ctx);
   };
 
@@ -791,17 +767,17 @@ void insertArgCaptureHook(IRBuilder<> &Builder, Module &M,
   }
 
   bool CustomTypeInstrumented = false;
-  for (auto &&[key, desc] : common::SCustomHooks) {
+  for (auto &&[key, hook] : Cfg.hookDescriptors) {
     if (Mapping.llvmArgNoMatches(ArgNum, key)) {
       if (!ArgT->isPointerTy()) {
-        errs() << desc.m_log_name
+        errs() << hook.logName
                << " hooks cannot handle non-pointer argument of this "
                   "type yet\n";
         return;
       }
 
-      VERBOSE_LOG << "Inserting call " << desc.m_log_name << "\n";
-      auto CallCxxString = GetOrInsertHookFn(desc.m_hookFnName, ArgT);
+      VERBOSE_LOG << "Inserting call " << hook.logName << "\n";
+      auto CallCxxString = GetOrInsertHookFn(hook.name, ArgT);
       instrumentArgHijack(Builder, M, Arg, ArgT, CallCxxString, C.module,
                           C.function);
       CustomTypeInstrumented = true;
@@ -935,7 +911,7 @@ Instrumentation::Instrumentation(llvm::Module &M,
 llcap::FunctionId Instrumentation::registerFunction(llvm::Function &Fn,
                                                     Str &DemangledName) {
   ClangMetadataToLLVMArgumentMapping Mapping =
-      common::createArgumentMapping(Fn, m_idxInfo);
+      common::createArgumentMapping(Fn, m_idxInfo, m_cfg->hookDescriptors);
   return m_fnIdMap.addFunction(DemangledName, Mapping);
 }
 
@@ -1042,9 +1018,11 @@ ArgumentInstrumentation::checkInstrument(Function &Fn) {
       Result = FnId->second;
     }
   }
-  if (Result) {
-    llvm::errs() << "Function " << DemangledName << " matches, ID: " << Result
-                 << '\n';
+  IF_DEBUG {
+    if (Result) {
+      llvm::errs() << "Function " << DemangledName << " matches, ID: " << Result
+                   << (m_fnNameRe ? " with Regex" : " with modmaps") << '\n';
+    }
   }
 
   return Result;
@@ -1073,13 +1051,14 @@ void ArgumentInstrumentation::instrument() {
         m_fnIdMap.getModuleMapIntId(), m_module, FnId);
 
     ClangMetadataToLLVMArgumentMapping Mapping =
-        common::createArgumentMapping(Fn, m_idxInfo);
+        common::createArgumentMapping(Fn, m_idxInfo, m_cfg->hookDescriptors);
     auto *TestFlagInsn =
         argCapture::insertArgCapturePreambleHooks(Builder, m_module, Constants);
 
     for (auto *Arg = Fn.arg_begin(); Arg != Fn.arg_end(); ++Arg) {
       argCapture::insertArgCaptureHook(Builder, m_module, Constants, Arg,
-                                       Mapping, Mapping.getArgumentSizeTypes());
+                                       Mapping, Mapping.getArgumentSizeTypes(),
+                                       *m_cfg);
     }
     argCapture::insertArgCaptureArgEpilogueHook(Builder, m_module, Constants);
 

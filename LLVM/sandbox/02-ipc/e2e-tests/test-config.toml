@@ -1,0 +1,5 @@
+# general config for all tests
+[llvm-pass]
+
+verbose = false
+debug = false

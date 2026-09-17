@@ -1,0 +1,141 @@
+# items marked TODO are unsupported by the parsers accross the components
+
+# TODO entire section
+[general.paths]
+
+# all paths are interpreted RELATIVE TO THIS FILE
+# unless path-root is set
+
+# an absolute path to the "project folder" - all other
+# paths are relative to this directory even if they 
+# are in the absolute form
+#path-root = '/home/user/test/project-bravo
+
+# path where the module mapping should be generated
+# - module mapping is created in the call tracing stage
+# - module mapping is a prerequisite for all subsequent stages
+module-maps-dir = './modmaps'
+
+# function selection path
+# - function selection is generated in the call tracing stage
+# - it is required to guide the capture/test stage recompilation of the target program
+fn-selection = './selection.bin'
+
+# call trace export path
+call-trace-export = './call-trace.out'
+
+# argument traces are generated in the argument tracing stage and
+# serve in the testing stage
+#arg-traces-dir    = './traces'
+
+# stdout and stderr of each test run is saved in this location
+#outputs-dir       = './outputs'
+
+# common for all components
+# TODO
+[general.options]
+# TODO: decide if this is needed/necessary for all components? (just llcap server?)
+# if true, each respective stage will clear out its output
+# paths before proceeding
+# if false, the instrumentation will fail if the paths above
+# already exist at the time of their creation attempt 
+replace = false
+
+# defines lists of constants that guide instrumentation
+[general.instrumentation-constants]
+# TODO
+# special argument/function markers - do not touch this area!
+fn-not-in-system-header-marker = { key = 'VSTR-NOT-SYSTEM-HEADER', value = 'notinsystemheader' }
+arg-numeric-unsigned-marker = { key = 'LLCAP_UNSIGNED_IDCS' }
+this-ptr-marker = { key = 'VSTR-LLVM-THIS' }
+marker-singlechar-sep = '#'
+
+# this table configures the llvm pass' runtime behavior
+[llvm-pass]
+# the llvm-pass'es configuration can be overridden on the command line by passing
+# -mllvm [arg]
+# these include some paths from the table above:
+# module-maps-dir:  -mllvm -llcap-mapdir
+#fn-selection: -mllvm -llcap-fn-targets-file
+
+# TODO - try to see how this could be really used - cmdline still needs a path to the config...
+# default instrumentation type
+# obeyed only when the pass has not been supplied any instrumentation
+# type arguments (-mllvm -Call, -mllvm -Arg)
+# possible values "Call" and "Arg"
+default-instrumentation-mode = "Call"
+
+# use function name mangling to filter out stdlib functions
+# (ineffective in C programs)
+# pass args: -mllvm -llcap-filter-by-mangled
+mangling-std-filter = false
+
+# instrument functions so that their exit can be intercepted
+# when testing them
+# in this configuration, testing mode declares the test as `Pass`ed 
+# if the function returns normally or `Exception` if an exception was 
+# thrown during the function's execution and the exception would 
+# otherwise propagate outside the function
+# pass args: -mllvm -llcap-instrument-fn-exit
+instrument-for-fn-exit = true
+
+fn-target-regex = "" # no regex matching
+
+verbose = true
+debug = true
+
+# TODO
+[llcap-server.general]
+
+# command to execute as the test target - relative to the working
+# directory of the llcap-server user
+#command = "./binary"
+
+# TODO
+[llcap-server.trace-calls]
+
+# call trace export file - used when no command is specified
+# to allow (re-)selection of a (different) function without the need
+# to rerun the entire program
+#export-path = './trace-export.bin'
+
+# TODO
+[llcap-server.capture-args]
+#
+#memory-limit = 0
+
+# TODO
+[llcap-server.test]
+
+# single-test-case timeout counted from the test cases' fork
+# from the test coordinator
+test-case-timeout-sec = 3
+
+# report path - either .txt or .json file
+report = './report.json'
+
+# global timeout for a test job - counter roughly from 
+# the start of the target program
+#test-job-timeout-secs     = 100
+
+
+# -------- BEGIN: custom type description
+# descriptions are read by the AST pass and the LLVM IR pass
+# that cooperate to insert instrumentation in desired places
+[nonllvm-types.stdstring]
+# arbitrary yet UNIQUE tag (used in IR to mark the argument)
+key = 'VSTR-CXX-STD-STRING'
+# corresponding hooklib function that gets a pointer to the
+# value of this type
+hooklib-fn = 'llcap_hooklib_extra_cxx_string'
+log-name = 'std::string'                      # appears in the logs
+# typename matches - can be defined more than once.
+# Any single match will cause the binding of the
+# argument to hooklib-fn to take place
+[[nonllvm-types.stdstring.typenames]]
+# allowed values: exact, regex
+type = 'exact'
+# exact matches look for value/pointer/reference
+# that match the value as specified here:
+value = 'class std::basic_string<char>'
+# -------- END: custom type description

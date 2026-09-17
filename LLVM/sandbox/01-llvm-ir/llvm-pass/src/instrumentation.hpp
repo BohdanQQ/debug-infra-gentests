@@ -1,3 +1,4 @@
+#include "Config.hpp"
 #include "argMapping.hpp"
 #include "constants.hpp"
 #include "modMapping.hpp"
@@ -55,16 +56,6 @@ struct SFnUidConstants {
 
 class Instrumentation {
 public:
-  // a dumb wrapper around some src/pass.cpp "args" namespace items
-  // which are required by the two instrumentation modes
-  struct Config {
-    bool useMangledNames{false};
-    Maybe<Str> modMapsDir;
-    bool performFnExitInstrumentation{false};
-    bool selectingByRegex{false};
-    Str SelectionStr;
-  };
-
   virtual ~Instrumentation() = default;
 
   [[nodiscard]] bool ready() const { return m_ready; }
@@ -124,6 +115,7 @@ public:
     // returns false on error
     virtual bool operator()(llvm::Module &, llvm::Function &,
                             const InstrParams &) = 0;
+    virtual ~IFunctionEndStrategy() {};
   };
   struct NoOpEndStrategy : IFunctionEndStrategy {
     bool operator()(llvm::Module & /*unused*/, llvm::Function & /*unused*/,
@@ -150,8 +142,12 @@ public:
   void instrument() override;
 
   bool finish() override {
-    std::ignore = FunctionIDMapper::flush(
-        std::move(m_fnIdMap), m_cfg->modMapsDir.value_or("module_maps"));
+    if (m_fnNameRe) {
+      // write only when creating the modmaps - only happens when capturing via
+      // regex
+      std::ignore = FunctionIDMapper::flush(
+          std::move(m_fnIdMap), m_cfg->modMapsDir.value_or("module_maps"));
+    }
     return true;
   }
 };

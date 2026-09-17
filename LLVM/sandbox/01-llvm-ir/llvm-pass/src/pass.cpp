@@ -1,4 +1,5 @@
 #include "llvm/Pass.h"
+#include "Config.hpp"
 #include "argMapping.hpp"
 #include "instrumentation.hpp"
 #include "typeAlias.hpp"
@@ -45,6 +46,10 @@ cl::opt<bool> Debug("llcap-debug", cl::desc("Debugging output"));
 cl::opt<std::string> MapFilesDirectory(
     "llcap-mapdir",
     cl::desc("Output directory for function ID maps (default: module-maps)"));
+// -mllvm -llcap-cfg-path
+cl::opt<std::string>
+    ConfigPath("llcap-cfg-path",
+               cl::desc("Configuration path (default: ./config.toml)"));
 // -mllvm -Call
 // -mllvm -Arg
 cl::opt<InstrumentationType> InstrumentationType(
@@ -83,22 +88,32 @@ bool instrumentArgs() {
 struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
 
   PreservedAnalyses run(Module &M, [[maybe_unused]] ModuleAnalysisManager &AM) {
-    verbose(args::Verbose.getValue(), args::Verbose.getValue());
-    debug(args::Debug.getValue(), args::Debug.getValue());
 
     VERBOSE_LOG << "Running pass on module " << M.getModuleIdentifier() << "\n";
+    bool RegexSelecting = args::TargetFnRegex.hasArgStr() &&
+                          !args::TargetFnRegex.getValue().empty();
+    llvm::errs() << "Config: " << args::ConfigPath.getValue() << '\n';
+    auto ParsedCfg = Config::parseConfigFrom(
+        args::ConfigPath.getValue(),
+        Config::Defaultable{
+            .performFnExitInstrumentation = args::InstrumentFnExit.getValue(),
+            .selectingByRegex = RegexSelecting,
+            .verbose = args::Verbose.getValue(),
+            .debug = args::Debug.getValue(),
+            .useMangledNames = args::MangleFilter.getValue(),
+            .selectionStr = RegexSelecting ? args::TargetFnRegex.getValue()
+                                           : args::TargetsFilePath.getValue() /* TODO */});
+    if (!ParsedCfg) {
+      report_fatal_error("Config could not be loaded");
+    }
 
-    auto Cfg = std::make_shared<Instrumentation::Config>();
-    Cfg->useMangledNames = args::MangleFilter;
+    auto Cfg = std::make_shared<Config>(std::move(*ParsedCfg));
+    // TODO
     Cfg->modMapsDir = args::MapFilesDirectory.hasArgStr()
                           ? Maybe<Str>(args::MapFilesDirectory.getValue())
                           : "module-maps";
-    Cfg->performFnExitInstrumentation = args::InstrumentFnExit.getValue();
-    Cfg->selectingByRegex = args::TargetFnRegex.hasArgStr() &&
-                            !args::TargetFnRegex.getValue().empty();
-    Cfg->SelectionStr = Cfg->selectingByRegex
-                            ? args::TargetFnRegex.getValue()
-                            : args::TargetsFilePath.getValue();
+    verbose(true, Cfg->verbose);
+    debug(true, Cfg->debug);
     if (instrumentArgs()) {
       VERBOSE_LOG << "Instrumenting args...\n";
       ArgumentInstrumentation Work(M, Cfg);
