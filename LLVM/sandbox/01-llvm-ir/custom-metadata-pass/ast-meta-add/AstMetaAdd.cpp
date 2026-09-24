@@ -6,22 +6,25 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-#include "./llvm-metadata.h"
+#include "./pass-commons/config.hpp"
+#include "./pass-commons/llvm-metadata.h"
 #include "clang/AST/ASTConsumer.h"
-#include <clang/AST/ASTContext.h>
 #include "clang/AST/Decl.h"
-#include <clang/AST/Decl.h>
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/RecursiveASTVisitor.h"
+#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Frontend/CompilerInstance.h"
-#include <clang/Frontend/FrontendAction.h>
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/Sema/Sema.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/StringSaver.h"
 #include "llvm/Support/raw_ostream.h"
+#include <clang/AST/ASTContext.h>
+#include <clang/AST/Decl.h>
+#include <clang/Frontend/FrontendAction.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -59,7 +62,7 @@ std::vector<size_t> filterParmIndicies(const FunctionDecl *FD,
 
 // inserts metadata encoding argument indicies under the specified metadata key
 // for the function represented by FD
-void addIndiciesMetadata(const llvm::StringRef MetaKey, const FunctionDecl *FD,
+void addIndiciesMetadata(const std::string MetaKey, const FunctionDecl *FD,
                          const std::vector<size_t> &Indicies) {
   std::stringstream ResStream("");
   for (size_t i = 0; i < Indicies.size(); ++i) {
@@ -73,14 +76,16 @@ void addIndiciesMetadata(const llvm::StringRef MetaKey, const FunctionDecl *FD,
   // this through the patched API)
   auto Res = ResStream.str();
   if (Res.length() > 0) {
+    // TODO: use llvm::StringSaver &Saver
     StringBackings.emplace(Res);
-    FD->setIrMetadata(MetaKey, *StringBackings.find(Res));
+    StringBackings.emplace(MetaKey);
+    FD->setIrMetadata(*StringBackings.find(MetaKey), *StringBackings.find(Res));
   }
 }
 
 // Predicate :: (ParmVarDecl* param, size_t ParamIndex) -> bool
 template <typename Predicate>
-void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
+void encodeArgIndiciesSatisfying(const std::string MetadataKey,
                                  const FunctionDecl *FD, Predicate Pred) {
   auto Indicies = filterParmIndicies(FD, Pred);
   addIndiciesMetadata(MetadataKey, FD, Indicies);
@@ -88,13 +93,14 @@ void encodeArgIndiciesSatisfying(const StringRef MetadataKey,
 
 // adds all metadata of interest to FD
 // log parameter is only for debugging purposes
-void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
+void addFunctionMetadata(const FunctionDecl *FD, const Config &Cfg,
+                         llvm::StringSaver &Saver) {
   auto &SourceManager = FD->getASTContext().getSourceManager();
   auto Loc = SourceManager.getExpansionLoc(FD->getBeginLoc());
   bool InSystemHeader = SourceManager.isInSystemHeader(Loc) ||
                         SourceManager.isInExternCSystemHeader(Loc) ||
                         SourceManager.isInSystemMacro(Loc);
-  if (Log) {
+  if (Cfg.debug) {
     llvm::errs() << FD->getDeclName() << ' '
                  << FD->getSourceRange().printToString(
                         FD->getASTContext().getSourceManager())
@@ -103,30 +109,43 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
     llvm::errs() << '\n';
   }
   if (!InSystemHeader) {
-    // we insert indicies of parameters that are std::string
-    encodeArgIndiciesSatisfying(
-        LLCAP_TYPE_STD_STRING, FD, [](ParmVarDecl *Arg, size_t Idx) {
-          auto TypeName = Arg->getType().getCanonicalType().getAsString();
-          return isTargetTypeValRefPtr(TypeName,
-                                       "class std::basic_string<char>");
-        });
-    
-    // Make this dynamic, please Q_Q
-    encodeArgIndiciesSatisfying(LLCAP_TYPE_STD_VECINT, FD, [](ParmVarDecl* Arg, size_t Idx) {
-      auto TypeName =  Arg->getType().getCanonicalType().getAsString();
-      return isTargetTypeValRefPtr(TypeName, "class std::vector<int>");
-    });
-
-    encodeArgIndiciesSatisfying(LLCAP_TYPE_STD_VECSTR, FD, [](ParmVarDecl* Arg, size_t Idx) {
-      auto TypeName =  Arg->getType().getCanonicalType().getAsString();
-      return isTargetTypeValRefPtr(TypeName, "class std::vector<class std::basic_string<char> >");
-    });
-    
-    // are unsigned numeric types
-    encodeArgIndiciesSatisfying(
-        LLCAP_UNSIGNED_IDCS, FD, [](ParmVarDecl *Arg, size_t Idx) {
-          return Arg->getType()->isUnsignedIntegerType();
-        });
+    for (const auto &[MetadataKey, Matcher] : Cfg.astTypeMatchers)
+      switch (Matcher.mode) {
+      case MatchMode::Exact:
+        encodeArgIndiciesSatisfying(
+            MetadataKey, FD, [Matcher, &Cfg](ParmVarDecl *Arg, size_t Idx) {
+              auto TypeName = Arg->getType().getCanonicalType().getAsString();
+              if (Cfg.verbose) {
+                llvm::errs() << TypeName << " <+> ";
+              }
+              return isTargetTypeValRefPtr(TypeName, Matcher.value);
+            });
+        break;
+      case MatchMode::IsUnsigned:
+        encodeArgIndiciesSatisfying(
+            MetadataKey, FD, [&Cfg](ParmVarDecl *Arg, size_t Idx) {
+              if (Cfg.verbose) {
+                llvm::errs() << Arg->getType().getCanonicalType().getAsString()
+                             << " <+> ";
+              }
+              return Arg->getType()->isUnsignedIntegerType();
+            });
+        break;
+      case MatchMode::Regex:
+        llvm::errs() << "Regex type matching not yet supported\n";
+        encodeArgIndiciesSatisfying(
+            MetadataKey, FD, [&Cfg](ParmVarDecl *Arg, size_t) {
+              if (Cfg.verbose) {
+                llvm::errs() << Arg->getType().getCanonicalType().getAsString()
+                             << " <+> ";
+              }
+              return false;
+            });
+        break;
+      default:
+        llvm::errs() << "Unknown matcher mode!\n";
+        break;
+      }
 
     // we also insert metadata regarding the locaiton of the function, we use
     // this to filter functions during IR instrumentation
@@ -136,7 +155,7 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
     if (FD->isCXXInstanceMember()) {
       FD->setIrMetadata(LLCAP_THIS_PTR_MARKER_KEY, "");
     }
-  } else if (Log) {
+  } else if (Cfg.debug) {
     llvm::errs() << "Function in system header due to:\n"
                  << SourceManager.isInSystemHeader(Loc) << " "
                  << SourceManager.isInExternCSystemHeader(Loc) << " "
@@ -145,8 +164,14 @@ void addFunctionMetadata(const FunctionDecl *FD, bool Log = false) {
 }
 
 class AddMetadataConsumer : public ASTConsumer {
+  StringRef m_inFile;
+  Config m_cfg;
+  llvm::BumpPtrAllocator m_allocator;
+  llvm::StringSaver m_saver{m_allocator};
+
 public:
-  AddMetadataConsumer() {}
+  AddMetadataConsumer(StringRef InFile, Config cfg)
+      : m_inFile(InFile), m_cfg(std::move(cfg)) {}
 
   void HandleNamespaceDecl(const NamespaceDecl *ND) {
     for (auto It = ND->decls_begin(); It != ND->decls_end(); ++It) {
@@ -157,26 +182,31 @@ public:
 
   void HandleDecl(Decl *D) {
     if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
-      addFunctionMetadata(FD);
+      addFunctionMetadata(FD, m_cfg, m_saver);
     } else if (const NamespaceDecl *ND = dyn_cast<NamespaceDecl>(D)) {
       HandleNamespaceDecl(ND);
     }
     HandleAllLambdaExprsInDecl(D);
   }
 
-  void HandleAllLambdaExprsInDecl(Decl *D) {
-
-    // Handling of lambdas is different - lambdas are expressions => we have to
-    // inspect the AST a bit more to get to the operator() of the anonymous type
-    // that gets created for the closure
-    struct LambdaVisitor : public RecursiveASTVisitor<LambdaVisitor> {
-      bool VisitLambdaExpr(const LambdaExpr *LE) {
-        if (CXXMethodDecl *MD = LE->getCallOperator(); MD != nullptr) {
-          addFunctionMetadata(MD->getAsFunction());
-        }
-        return true;
+  // Handling of lambdas is different - lambdas are expressions => we have to
+  // inspect the AST a bit more to get to the operator() of the anonymous type
+  // that gets created for the closure
+  struct LambdaVisitor : public RecursiveASTVisitor<LambdaVisitor> {
+    Config m_cfg;
+    llvm::StringSaver &m_saver;
+    LambdaVisitor(Config &cfg, llvm::StringSaver &saver)
+        : m_cfg(cfg), m_saver(saver) {};
+    bool VisitLambdaExpr(const LambdaExpr *LE) {
+      if (CXXMethodDecl *MD = LE->getCallOperator(); MD != nullptr) {
+        addFunctionMetadata(MD->getAsFunction(), m_cfg, m_saver);
       }
-    } Lv;
+      return true;
+    }
+  };
+
+  void HandleAllLambdaExprsInDecl(Decl *D) {
+    LambdaVisitor Lv(m_cfg, m_saver);
     Lv.TraverseDecl(D);
   }
 
@@ -192,19 +222,42 @@ public:
   }
 
   void HandleInlineFunctionDefinition(FunctionDecl *FD) override {
-    addFunctionMetadata(FD);
+    addFunctionMetadata(FD, m_cfg, m_saver);
   }
 };
 
 class AddMetadataAction : public PluginASTAction {
+  Config m_cfg;
+
 protected:
-  std::unique_ptr<ASTConsumer> CreateASTConsumer(CompilerInstance &CI,
-                                                 llvm::StringRef) override {
-    return std::make_unique<AddMetadataConsumer>();
+  std::unique_ptr<ASTConsumer>
+  CreateASTConsumer(CompilerInstance &CI, llvm::StringRef InFile) override {
+    return std::make_unique<AddMetadataConsumer>(InFile, m_cfg);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
                  const std::vector<std::string> &args) override {
+    llvm::errs() << "[AST] Arg parsing" << '\n';
+    m_cfg.setDefaults();
+    for (const auto &arg : args) {
+      auto config = arg.rfind("--config=");
+      if (config == std::string::npos) {
+        llvm::errs() << "[AST] Skipping argument" << arg << '\n';
+        continue;
+      }
+      auto cfg_path = arg.substr(config + sizeof("--config=") - 1);
+      llvm::errs() << "[AST] Loading config file from " << cfg_path << '\n';
+      auto cfg = Config::parseConfigFrom(cfg_path, Config::Defaultable{});
+      if (!cfg) {
+        llvm::errs() << "[AST] Warning: ACF frontend plugin failed to parse "
+                        "configuration\n";
+        CI.getDiagnostics().Report(StoredDiagnostic(
+            DiagnosticsEngine::Error, 0, "Could not parse configuration file"));
+        return false;
+      }
+      m_cfg = *cfg;
+      return true;
+    }
     return true;
   }
 
@@ -213,4 +266,4 @@ protected:
 } // namespace
 
 static FrontendPluginRegistry::Add<AddMetadataAction>
-    X("ast-meta-add", "Inserts metadata alongside non-system functions");
+    X("LlcapMetaAdd", "Inserts metadata alongside non-system functions");

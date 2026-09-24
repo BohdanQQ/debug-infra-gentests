@@ -8,8 +8,10 @@ if( NOT MSVC ) # MSVC mangles symbols differently, and
     endif()
   endif()
 endif()
-
+set(CMAKE_CXX_STANDARD 20)
 add_llvm_library(AstMetaAdd MODULE AstMetaAdd.cpp PLUGIN_TOOL clang)
+target_include_directories(AstMetaAdd PUBLIC ./pass-commons/)
+
 
 if(WIN32 OR CYGWIN)
   set(LLVM_LINK_COMPONENTS

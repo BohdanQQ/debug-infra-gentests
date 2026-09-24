@@ -7,12 +7,12 @@ set -e
 LlvmPath=../../llvm-project
 TargetToolFolder=$LlvmPath/clang/examples/ast-meta-add
 if [ -d "$TargetToolFolder" ]; then
-  echo "Directory already exists. This script should be run only once..."
+  echo "Directory $TargetToolFolder already exists. This script should be run only once..."
   exit 1
 fi
 
 mkdir "$TargetToolFolder"
-cp -r ./ast-meta-add/* "$TargetToolFolder"
+cp -rL ./ast-meta-add/* "$TargetToolFolder"
 
 # this is why you should not run this more than once - to undo this, simply undo this append
 echo "add_subdirectory(ast-meta-add)" >> "$LlvmPath/clang/examples/CMakeLists.txt"

@@ -1,9 +1,10 @@
 #ifndef LLCAP_LLVMPASS_CFG
 #define LLCAP_LLVMPASS_CFG
 
-#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
+#include "./llvm-metadata.h"
 #include "typeAlias.hpp"
 
+#define TOML_EXCEPTIONS 0
 #include "toml/toml.hpp"
 #include <llvm/Support/raw_ostream.h>
 #include <optional>
@@ -17,8 +18,16 @@ struct FnHookDesc {
   bool isInvalidLlcapSize{false};
 };
 
+enum class MatchMode { Exact, Regex, IsUnsigned };
+
+struct TypeMatcher {
+  MatchMode mode;
+  Str value;
+};
+
 struct Config {
   Map<Str, FnHookDesc> hookDescriptors;
+  Map<Str, TypeMatcher> astTypeMatchers;
   bool useMangledNames{false};
   Maybe<Str> modMapsDir;
   bool performFnExitInstrumentation{false};
@@ -48,8 +57,9 @@ private:
     return V->as_string()->get();
   }
 
+public:
   void setDefaults() {
-    static Map<Str, FnHookDesc> Defaults{
+    static Map<Str, FnHookDesc> DefaultHooks{
         {LLCAP_TYPE_STD_STRING,
          FnHookDesc{
              .name = "llcap_hooklib_extra_cxx_string",
@@ -68,19 +78,48 @@ private:
         {LLCAP_UNSIGNED_IDCS, FnHookDesc{.name = "llcap_NOTHING_NEVER",
                                          .logName = "invalid type",
                                          .isInvalidLlcapSize = true}}};
+    static Map<Str, TypeMatcher> DefaultMatchers{
+        {LLCAP_TYPE_STD_STRING,
+         TypeMatcher{
+             .mode = MatchMode::Exact,
+             .value = "class std::basic_string<char>",
+         }},
+        {LLCAP_TYPE_STD_VECINT,
+         TypeMatcher{
+             .mode = MatchMode::Exact,
+             .value = "class std::vector<int>",
+         }},
+        {LLCAP_TYPE_STD_VECSTR,
+         TypeMatcher{
+             .mode = MatchMode::Exact,
+             .value = "class std::vector<class std::basic_string<char> >",
+         }},
+        {LLCAP_UNSIGNED_IDCS,
+         TypeMatcher{.mode = MatchMode::IsUnsigned, .value = ""}}};
 
-    for (const auto &[K, defaultEntry] : Defaults) {
-      if (this->hookDescriptors.contains(K)) {
+    for (const auto &[K, defaultEntry] : DefaultHooks) {
+      auto &Descs = this->hookDescriptors;
+      if (Descs.find(K) != Descs.end()) {
         llvm::errs() << "Metadata key " << K
                      << " is a default. Make sure you understand you are "
                         "overriding the default behavior of the hooks!\n";
       } else {
-        this->hookDescriptors[K] = defaultEntry;
+        Descs[K] = defaultEntry;
+      }
+    }
+
+    for (const auto &[K, defaultEntry] : DefaultMatchers) {
+      auto &Matchers = this->astTypeMatchers;
+      if (Matchers.find(K) != Matchers.end()) {
+        llvm::errs() << "Metadata key " << K
+                     << " is a default. Make sure you understand you are "
+                        "overriding the default behavior of the matchers!\n";
+      } else {
+        Matchers[K] = defaultEntry;
       }
     }
   }
 
-public:
   static Maybe<Config> parseConfigFrom(const Str &Path,
                                        const Defaultable &Defaults) {
     if (Path.empty()) {
@@ -91,7 +130,7 @@ public:
 
     auto const Parsed = toml::parse_file(Path);
 
-    auto const *Res = Parsed.get("nonllvm-types");
+    auto const *Res = Parsed.table().get("nonllvm-types");
     Config Cfg;
     if (Res != nullptr && Res->is_table()) {
       llvm::errs()
@@ -133,6 +172,8 @@ public:
             Ok = false;
             break;
           }
+          Cfg.astTypeMatchers[*ConfigKey] =
+              TypeMatcher{.mode = MatchMode::Exact, .value = *Matcher};
         }
         if (!Ok) {
           continue;
@@ -142,7 +183,7 @@ public:
       }
     }
 
-    auto const *PassRes = Parsed.get("llvm-pass");
+    auto const *PassRes = Parsed.table().get("llvm-pass");
     if (PassRes == nullptr || !PassRes->is_table()) {
       llvm::errs() << "llvm-pass is either missing or not a top-level table\n";
       return std::nullopt;

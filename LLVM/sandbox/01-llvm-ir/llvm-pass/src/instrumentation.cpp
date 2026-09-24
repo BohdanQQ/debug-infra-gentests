@@ -1,9 +1,9 @@
 #include "instrumentation.hpp"
 
-#include "../../custom-metadata-pass/ast-meta-add/llvm-metadata.h"
-#include "Config.hpp"
 #include "argMapping.hpp"
+#include "config.hpp"
 #include "constants.hpp"
+#include "llvm-metadata.h"
 #include "modMapping.hpp"
 #include "typeAlias.hpp"
 #include "typeids.h"
@@ -89,7 +89,7 @@ createArgumentMapping(Function &Fn, IdxMappingInfo &IdxInfo,
   ClangMetadataToLLVMArgumentMapping Mapping(Fn, IdxInfo);
   for (auto &&[key, entry] : Config) {
     DEBUG_LOG << "Registering " << key << " entry: " << entry.name << " is "
-                 << (entry.isInvalidLlcapSize ? "invalid" : "valid") << '\n';
+              << (entry.isInvalidLlcapSize ? "invalid" : "valid") << '\n';
     Mapping.registerCustomTypeIndicies(key, entry.isInvalidLlcapSize
                                                 ? LlcapSizeType::LLSZ_INVALID
                                                 : LlcapSizeType::LLSZ_CUSTOM);
@@ -682,7 +682,7 @@ bool tryInsertIntegerArgCapture(
 
   auto IsAttrUnsgined = Mapping.llvmArgNoMatches(ArgNum, LLCAP_UNSIGNED_IDCS);
   auto ThisArgSize = Sizes[ArgNum].second;
-  IF_DEBUG {  
+  IF_DEBUG {
     errs() << " arg:\n";
     Arg->dump();
   }

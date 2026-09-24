@@ -1,6 +1,5 @@
-#include "llvm/Pass.h"
-#include "Config.hpp"
 #include "argMapping.hpp"
+#include "config.hpp"
 #include "instrumentation.hpp"
 #include "typeAlias.hpp"
 #include "utility.hpp"
@@ -19,6 +18,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include <llvm/IR/Type.h>
+#include "llvm/Pass.h"
 #include <llvm/Passes/OptimizationLevel.h>
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
@@ -101,8 +101,9 @@ struct InstrumentationPass : public PassInfoMixin<InstrumentationPass> {
             .verbose = args::Verbose.getValue(),
             .debug = args::Debug.getValue(),
             .useMangledNames = args::MangleFilter.getValue(),
-            .selectionStr = RegexSelecting ? args::TargetFnRegex.getValue()
-                                           : args::TargetsFilePath.getValue() /* TODO */});
+            .selectionStr = RegexSelecting
+                                ? args::TargetFnRegex.getValue()
+                                : args::TargetsFilePath.getValue() /* TODO */});
     if (!ParsedCfg) {
       report_fatal_error("Config could not be loaded");
     }

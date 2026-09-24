@@ -1,5 +1,5 @@
-#include "Config.hpp"
 #include "argMapping.hpp"
+#include "config.hpp"
 #include "constants.hpp"
 #include "modMapping.hpp"
 #include "typeAlias.hpp"

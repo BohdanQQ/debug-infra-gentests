@@ -27,6 +27,7 @@ OutputsDir="$TmpDir"/out
 LlcapSvrBin="$WorkingDir/../../llcap-server/target/debug/llcap-server"
 InstrumentedBin="$BuildDir"/testbin
 ModMapsPath="$BuildDir"/module-maps/
+ConfigPath="$WorkingDir/../test-config.toml"
 
 # build hooklib
 cd ../../ipc-hooklib
@@ -60,9 +61,9 @@ then
   "$WorkingDir"
 
   cmake   -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=../libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath"\
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -S -emit-llvm" \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -llcap-mapdir=./mmaps -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath -S -emit-llvm" \
   "$WorkingDir"
  
   # initialize directory for llvm pass artifacts
@@ -89,9 +90,9 @@ cmake -D CMAKE_C_COMPILER=clang \
 mkdir "$ModMapsPath"
 
 cmake -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_C_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath" \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so" \
+  -D CMAKE_CXX_FLAGS="-mllvm -Call -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath" \
   "$WorkingDir"
 
 # re-initialize artifact directories
@@ -113,9 +114,9 @@ cmake -D CMAKE_C_COMPILER=clang \
   "$WorkingDir"
 
 cmake   -D CMAKE_C_COMPILER=clang \
-  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml  -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_C_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml  -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath"  \
   -D CMAKE_CXX_COMPILER=clang++ \
-  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so"  \
+  -D CMAKE_CXX_FLAGS="$CppArgs -mllvm -llcap-mapdir=$ModMapsPath -mllvm -llcap-cfg-path=$WorkingDir/../test-config.toml -mllvm -Arg -mllvm -llcap-fn-targets-file=$SelectionPath -Xclang -load -Xclang ./libfn-pass.so -Xclang -fpass-plugin=./libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so -Xclang -plugin-arg-LlcapMetaAdd -Xclang --config=$ConfigPath"  \
   "$WorkingDir"
 
 make clean

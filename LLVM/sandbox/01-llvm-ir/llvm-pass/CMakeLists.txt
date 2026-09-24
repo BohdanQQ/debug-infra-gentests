@@ -9,3 +9,4 @@ add_definitions(${NO_RTTI})
 
 add_library(fn-pass SHARED ./src/pass.cpp ./src/instrumentation.cpp ./src/modMapping.cpp ./src/argMapping.cpp ./src/verbosity.cpp)
 
+target_include_directories(fn-pass PUBLIC ../pass-commons)
