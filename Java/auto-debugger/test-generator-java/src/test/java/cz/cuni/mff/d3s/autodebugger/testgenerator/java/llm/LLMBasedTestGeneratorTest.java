@@ -107,7 +107,6 @@ class LLMBasedTestGeneratorTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-key")
                 .maxTokens(4000)
-                .temperature(0.3)
                 .build();
 
         assertDoesNotThrow(() -> generator.configure(config));
@@ -216,7 +215,7 @@ class LLMBasedTestGeneratorTest {
                 .apiKey("test-key")
                 .build();
 
-        assertEquals("claude-sonnet-4-5-20250929", config.getModelName());
+        assertEquals("claude-sonnet-4-6", config.getModelName());
 
         assertDoesNotThrow(() -> generator.configure(config));
     }
@@ -307,6 +306,7 @@ class LLMBasedTestGeneratorTest {
     void givenAnthropicModels_whenConfiguring_thenAllModelsAreSupported() {
         // Test Anthropic-specific model configurations
         String[] claudeModels = {
+            "claude-sonnet-4-6",
             "claude-sonnet-4-5-20250929",
             "claude-sonnet-4-20250514",
             "claude-3-7-sonnet-20250219",
@@ -319,7 +319,6 @@ class LLMBasedTestGeneratorTest {
                     .modelName(model)
                     .apiKey("test-key")
                     .maxTokens(4000)
-                    .temperature(0.3)
                     .build();
 
             assertEquals(model, config.getModelName());

@@ -55,9 +55,9 @@ class DiSLInstrumentorTest {
         public class CollectorRE {
           private static short intId = REDispatch.registerMethod("Collector.collectInt");
 
-          public static void collectInt(final int slot, final int i) {
+          public static void collectInt(final int slotId, final int i) {
             REDispatch.analysisStart(intId);
-            REDispatch.sendInt(slot);
+            REDispatch.sendInt(slotId);
             REDispatch.sendInt(i);
             REDispatch.analysisEnd();
           }

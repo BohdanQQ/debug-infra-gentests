@@ -210,7 +210,7 @@ class EndToEndPipelineIntegrationTest {
         NaiveTraceBasedGenerator generator = new NaiveTraceBasedGenerator(loadedMapping);
 
         // Generate tests from the trace
-        List<Path> generatedTestFiles = generator.generateTests(mockTrace, context);
+        List<Path> generatedTestFiles = generator.generateTests(mockTrace, tempDir, context);
 
         // ===== VERIFICATION: Ensure Generated Tests Contain Expected Values =====
 

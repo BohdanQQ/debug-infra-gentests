@@ -29,7 +29,6 @@ class LLMTestGenerationClientTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-api-key")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(() -> client.configure(config));
@@ -40,7 +39,6 @@ class LLMTestGenerationClientTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName("mock")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(() -> client.configure(config));
@@ -59,7 +57,6 @@ class LLMTestGenerationClientTest {
                     .modelName("claude-sonnet-4-20250514")
                     .apiKey(null)
                     .maxTokens(1000)
-                    .temperature(0.7)
                     .build();
 
             assertThrows(LLMConfigurationException.class, config::validate);
@@ -74,7 +71,6 @@ class LLMTestGenerationClientTest {
                     .modelName("claude-sonnet-4-20250514")
                     .apiKey("   ")
                     .maxTokens(1000)
-                    .temperature(0.7)
                     .build();
 
             assertThrows(LLMConfigurationException.class, config::validate);
@@ -91,7 +87,6 @@ class LLMTestGenerationClientTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName("mock")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         client.configure(config);
@@ -134,7 +129,6 @@ class LLMTestGenerationClientTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-key")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(validConfig::validate);
@@ -156,14 +150,6 @@ class LLMTestGenerationClientTest {
                 .build();
 
         assertThrows(LLMConfigurationException.class, invalidMaxTokens::validate);
-
-        // Test invalid temperature
-        LLMConfiguration invalidTemperature = LLMConfiguration.builder()
-                .apiKey("test-key")
-                .temperature(1.5)
-                .build();
-
-        assertThrows(LLMConfigurationException.class, invalidTemperature::validate);
     }
 
     @Test

@@ -20,7 +20,7 @@ class PromptBuilderTest {
     @Test
     void givenBasicContext_whenBuildingPrompt_thenContainsRequiredSections() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { public int add(int a, int b) { return a + b; } }")
+                .sourceCodeInfo("public class Calculator { public int add(int a, int b) }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .generateEdgeCases(false)
@@ -30,7 +30,7 @@ class PromptBuilderTest {
         String prompt = promptBuilder.buildTestGenerationPrompt(context);
 
         assertTrue(prompt.contains("## Requirements"), "Prompt should contain Requirements section");
-        assertTrue(prompt.contains("## Source Code to Test"), "Prompt should contain Source Code section");
+        assertTrue(prompt.contains("## Java Source Code to Test"), "Prompt should contain Source Code section");
         assertTrue(prompt.contains("add(int, int)"), "Prompt should contain target method signature");
         assertTrue(prompt.contains("junit5"), "Prompt should contain test framework");
     }
@@ -38,7 +38,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithTraceData_whenBuildingPrompt_thenContainsRuntimeSection() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { public int add(int a, int b) { return a + b; } }")
+                .sourceCodeInfo("public class Calculator { public int add(int a, int b) }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .traceData("add(2, 3) -> 5\nadd(0, 0) -> 0")
@@ -56,7 +56,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithoutTraceData_whenBuildingPrompt_thenNoRuntimeSection() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .traceData(null)
@@ -73,7 +73,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithEmptyTraceData_whenBuildingPrompt_thenNoRuntimeSection() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .traceData("")
@@ -90,7 +90,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithEdgeCasesEnabled_whenBuildingPrompt_thenContainsEdgeCaseRequirement() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .generateEdgeCases(true)
@@ -106,7 +106,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithNegativeTestsEnabled_whenBuildingPrompt_thenContainsNegativeTestRequirement() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .generateEdgeCases(false)
@@ -123,7 +123,7 @@ class PromptBuilderTest {
     @Test
     void givenContextWithAdditionalInstructions_whenBuildingPrompt_thenContainsAdditionalSection() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .additionalInstructions("Focus on thread safety")
@@ -142,7 +142,7 @@ class PromptBuilderTest {
     @Test
     void givenEmptyAdditionalInstructions_whenBuildingPrompt_thenNoAdditionalSection() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .additionalInstructions("   ")  // whitespace only
@@ -158,9 +158,9 @@ class PromptBuilderTest {
 
     @Test
     void givenSourceCodeWithJavaClass_whenBuildingPrompt_thenSourceCodeIsInCodeBlock() {
-        String sourceCode = "public class Calculator { public int add(int a, int b) { return a + b; } }";
+        String sourceCodeInfo = "public class Calculator { public int add(int a, int b) }";
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode(sourceCode)
+                .sourceCodeInfo(sourceCodeInfo)
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit5")
                 .generateEdgeCases(false)
@@ -169,15 +169,16 @@ class PromptBuilderTest {
 
         String prompt = promptBuilder.buildTestGenerationPrompt(context);
 
-        assertTrue(prompt.contains("```java"), "Prompt should contain java code block marker");
-        assertTrue(prompt.contains("```"), "Prompt should contain code block closing marker");
-        assertTrue(prompt.contains(sourceCode), "Prompt should contain the source code");
+        // Java code block markers have been omitted from the LLM prompt (to see if it helps to get better results)
+        //assertTrue(prompt.contains("```java"), "Prompt should contain java code block marker");
+        //assertTrue(prompt.contains("```"), "Prompt should contain code block closing marker");
+        assertTrue(prompt.contains(sourceCodeInfo), "Prompt should contain the information about source code");
     }
 
     @Test
     void givenDifferentTestFramework_whenBuildingPrompt_thenUsesCorrectFramework() {
         LLMPromptContext context = LLMPromptContext.builder()
-                .sourceCode("public class Calculator { }")
+                .sourceCodeInfo("public class Calculator { }")
                 .targetMethodSignature("add(int, int)")
                 .testFramework("junit4")
                 .generateEdgeCases(false)

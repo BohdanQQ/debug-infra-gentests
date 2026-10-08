@@ -242,8 +242,9 @@ class OrchestratorGenerateTestsIntegrationTest {
         Pattern methodPattern = Pattern.compile("void\\s+\\w+\\s*\\([^)]*\\)");
         assertTrue(methodPattern.matcher(content).find(), "Should contain properly formatted method declarations");
 
+        // PP: setUp method with @BeforeEach does not have to be generated in the current version
         // Verify proper test structure
-        assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
+        //assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
         assertTrue(content.contains("assertNotNull"), "Should contain assertions");
 
         // Note: Package declaration may not be present in all generators
@@ -288,8 +289,9 @@ class OrchestratorGenerateTestsIntegrationTest {
         // Verify assertion usage
         assertTrue(content.contains("assertNotNull("), "Should contain proper assertions");
 
+        // PP: setUp method with @BeforeEach does not have to be generated in the current version
         // Verify proper test structure elements
-        assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
+        //assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
         assertTrue(content.contains("// Arrange"), "Should contain test structure comments");
         assertTrue(content.contains("// Act"), "Should contain test structure comments");
         assertTrue(content.contains("// Assert"), "Should contain test structure comments");

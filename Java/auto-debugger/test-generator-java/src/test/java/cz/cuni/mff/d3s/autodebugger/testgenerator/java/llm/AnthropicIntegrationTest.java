@@ -26,7 +26,6 @@ class AnthropicIntegrationTest {
                 .modelName(HAIKU_3_MODEL)
                 .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -41,7 +40,6 @@ class AnthropicIntegrationTest {
                 .modelName(HAIKU_3_MODEL)
                 .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                 .maxTokens(2000)
-                .temperature(0.3)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -77,7 +75,6 @@ class AnthropicIntegrationTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName("mock")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -143,7 +140,6 @@ class AnthropicIntegrationTest {
                 .modelName(HAIKU_3_MODEL)
                 .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                 .maxTokens(500)
-                .temperature(0.1)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -161,37 +157,6 @@ class AnthropicIntegrationTest {
 
     @Test
     @EnabledIfEnvironmentVariable(named = "ANTHROPIC_API_KEY", matches = ".+")
-    void givenDifferentTemperatureSettings_whenGeneratingCode_thenProducesAppropriateOutput() throws Exception {
-        // Test different temperature settings optimized for code generation
-        double[] temperatures = {0.0, 0.1, 0.3}; // Anthropic recommends 0.0-0.3 for code
-
-        for (double temp : temperatures) {
-            LLMConfiguration config = LLMConfiguration.builder()
-                    .modelName(HAIKU_3_MODEL)
-                    .apiKey(System.getenv("ANTHROPIC_API_KEY"))
-                    .maxTokens(1000)
-                    .temperature(temp)
-                    .build();
-
-            AnthropicClient client = new AnthropicClient();
-            client.configure(config);
-
-            String prompt = "Generate a JUnit test for a simple add method";
-            String response = client.generateCode(prompt);
-
-            assertNotNull(response, "Response should not be null for temperature: " + temp);
-            assertFalse(response.trim().isEmpty(), "Response should not be empty for temperature: " + temp);
-
-            // Lower temperatures should produce more deterministic output
-            if (temp == 0.0) {
-                assertTrue(response.contains("@Test") || response.contains("test"),
-                    "Response with temperature 0.0 should contain test-related content");
-            }
-        }
-    }
-
-    @Test
-    @EnabledIfEnvironmentVariable(named = "ANTHROPIC_API_KEY", matches = ".+")
     void givenDifferentTokenLimits_whenGeneratingCode_thenRespectsTokenLimits() throws Exception {
         // Test different token limits within Anthropic's supported range
         int[] tokenLimits = {500, 2000, 4000}; // Up to 8192 for Claude models
@@ -201,7 +166,6 @@ class AnthropicIntegrationTest {
                     .modelName(HAIKU_3_MODEL)
                     .apiKey(System.getenv("ANTHROPIC_API_KEY"))
                     .maxTokens(maxTokens)
-                    .temperature(0.2)
                     .build();
 
             AnthropicClient client = new AnthropicClient();

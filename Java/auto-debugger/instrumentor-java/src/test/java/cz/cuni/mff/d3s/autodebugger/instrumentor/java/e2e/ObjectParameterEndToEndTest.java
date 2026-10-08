@@ -48,8 +48,8 @@ class ObjectParameterEndToEndTest extends DiSLEndToEndTestBase {
         Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
         Map<Integer, JavaValueIdentifier> mapping = deserializeIdentifierMapping(instrumentation.getIdentifiersMappingPath());
 
-        int slot = findSlotForArgument(mapping, 0);
-        Set<ObjectSnapshot> objectValues = trace.getObjectValues(slot);
+        int slotId = findSlotForArgument(mapping, 0);
+        Set<ObjectSnapshot> objectValues = trace.getObjectValues(slotId);
 
         assertFalse(objectValues.isEmpty(), "Trace should contain object values for Person parameter");
         

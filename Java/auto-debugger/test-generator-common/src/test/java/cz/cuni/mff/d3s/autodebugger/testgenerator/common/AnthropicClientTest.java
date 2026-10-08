@@ -31,7 +31,6 @@ class AnthropicClientTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-api-key")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(() -> client.configure(config));
@@ -42,7 +41,6 @@ class AnthropicClientTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName("mock")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         client.configure(config);
@@ -68,7 +66,6 @@ class AnthropicClientTest {
                 .modelName("claude-sonnet-4-20250514")
                 .apiKey("test-key")
                 .maxTokens(1000)
-                .temperature(0.7)
                 .build();
 
         assertDoesNotThrow(validConfig::validate);
@@ -90,14 +87,6 @@ class AnthropicClientTest {
                 .build();
 
         assertThrows(Exception.class, invalidMaxTokens::validate);
-
-        // Test invalid temperature
-        LLMConfiguration invalidTemperature = LLMConfiguration.builder()
-                .apiKey("test-key")
-                .temperature(1.5)
-                .build();
-
-        assertThrows(Exception.class, invalidTemperature::validate);
     }
 
     @Test
@@ -145,6 +134,7 @@ class AnthropicClientTest {
     void givenSupportedModelNames_whenValidating_thenAllAreValid() {
         // Test all supported Anthropic model names
         String[] supportedModels = {
+            "claude-sonnet-4-6",
             "claude-sonnet-4-5-20250929",
             "claude-sonnet-4-20250514",
             "claude-3-7-sonnet-20250219",
@@ -172,46 +162,16 @@ class AnthropicClientTest {
                 .apiKey("test-key")
                 .build();
 
-        // Default model should be the most capable Claude model (Sonnet 4.5)
-        assertEquals("claude-sonnet-4-5-20250929", config.getModelName());
-
-        // Default temperature should be optimized for code generation (0.3)
-        assertEquals(0.3, config.getTemperature(), 0.001);
+        // Default model should be the most capable Claude model (Sonnet 4.6)
+        assertEquals("claude-sonnet-4-6", config.getModelName());
 
         // Default max tokens should be reasonable for test generation
-        assertEquals(4000, config.getMaxTokens());
+        assertEquals(64000, config.getMaxTokens());
 
         // Code generation features should be enabled by default
         assertTrue(config.isEnableIterativeRefinement());
         assertTrue(config.isValidateGeneratedCode());
-        assertEquals(3, config.getMaxRefinementIterations());
-    }
-
-    @Test
-    void givenTemperatureValues_whenValidatingForCodeGeneration_thenValidatesCorrectly() {
-        // Test temperature validation with focus on code generation ranges
-        double[] validTemperatures = {0.0, 0.1, 0.3, 0.5, 1.0};
-        double[] invalidTemperatures = {-0.1, 1.1, 2.0};
-
-        for (double temp : validTemperatures) {
-            LLMConfiguration config = LLMConfiguration.builder()
-                    .apiKey("test-key")
-                    .temperature(temp)
-                    .build();
-
-            assertDoesNotThrow(config::validate,
-                "Temperature " + temp + " should be valid");
-        }
-
-        for (double temp : invalidTemperatures) {
-            LLMConfiguration config = LLMConfiguration.builder()
-                    .apiKey("test-key")
-                    .temperature(temp)
-                    .build();
-
-            assertThrows(Exception.class, config::validate,
-                "Temperature " + temp + " should be invalid");
-        }
+        assertEquals(1, config.getMaxRefinementIterations());
     }
 
     @Test

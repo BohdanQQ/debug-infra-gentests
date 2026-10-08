@@ -67,6 +67,11 @@ public class TestExecutionResult {
     private final int skippedCount;
     
     /**
+     * Names of failed tests.
+     */
+    private final List<String> failedTestsNames;
+    
+    /**
      * Additional metadata about the test execution.
      */
     @Singular("metadataEntry")
@@ -103,5 +108,18 @@ public class TestExecutionResult {
     public double getSuccessRate() {
         int total = getTotalTestCount();
         return total > 0 ? (double) passedCount / total * 100.0 : 0.0;
+    }
+
+    public String printFailedTestsNames() {
+        if (failedTestsNames == null) return "";
+        if (failedTestsNames.isEmpty()) return "";
+
+        StringBuilder sb = new StringBuilder();
+
+        for (String ftn : failedTestsNames) {
+            sb.append("\tFailed test ").append(ftn).append("\n");
+        }
+
+        return sb.toString();
     }
 }

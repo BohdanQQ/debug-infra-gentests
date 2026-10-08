@@ -59,10 +59,10 @@ public class TestResult {
     private final String details;
     
     /**
-     * Gets the full test identifier (className.methodName).
+     * Gets the full test identifier (className: testName), where testName is either a custom display name (defined in annotation) or a method name defined in the source code.
      */
     public String getFullTestName() {
-        return testClassName + "." + testName;
+        return testClassName + ": " + testName;
     }
     
     /**

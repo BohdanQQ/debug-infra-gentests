@@ -19,7 +19,6 @@ class AnthropicClientIntegrationTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName(CHEAPEST_MODEL)
                 .maxTokens(100)
-                .temperature(0.1)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -33,7 +32,6 @@ class AnthropicClientIntegrationTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName(CHEAPEST_MODEL)
                 .maxTokens(500)
-                .temperature(0.1)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -54,7 +52,6 @@ class AnthropicClientIntegrationTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName(CHEAPEST_MODEL)
                 .maxTokens(1000)
-                .temperature(0.1)
                 .build();
 
         AnthropicClient client = new AnthropicClient();
@@ -80,7 +77,6 @@ class AnthropicClientIntegrationTest {
         LLMConfiguration config = LLMConfiguration.builder()
                 .modelName(CHEAPEST_MODEL)
                 .maxTokens(100)  // Very small token limit
-                .temperature(0.0)
                 .build();
 
         AnthropicClient client = new AnthropicClient();

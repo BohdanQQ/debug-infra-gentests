@@ -23,6 +23,7 @@ dependencies {
     implementation("org.junit.platform:junit-platform-launcher")
     implementation("org.junit.platform:junit-platform-engine")
     implementation("org.junit.jupiter:junit-jupiter-engine")
+    implementation("org.junit.jupiter:junit-jupiter-params")
 
     // For compiling generated tests
     implementation("org.eclipse.jdt:ecj:3.35.0")

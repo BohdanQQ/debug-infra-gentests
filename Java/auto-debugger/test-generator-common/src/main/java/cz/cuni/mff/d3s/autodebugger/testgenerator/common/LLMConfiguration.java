@@ -20,7 +20,8 @@ public class LLMConfiguration {
     /**
      * Claude model name to use.
      * Supported models:
-     * - "claude-sonnet-4-5-20250929" (default, most capable - Sonnet 4.5)
+     * - "claude-sonnet-4-6" (default, most capable - Sonnet 4.6)
+     * - "claude-sonnet-4-5-20250929" (Sonnet 4.5)
      * - "claude-sonnet-4-20250514" (Sonnet 4)
      * - "claude-3-7-sonnet-20250219" (Sonnet 3.7)
      * - "claude-3-5-haiku-20241022" (fast, cost-effective)
@@ -28,7 +29,7 @@ public class LLMConfiguration {
      * - "mock" (for testing, returns predefined responses)
      */
     @Builder.Default
-    private final String modelName = "claude-sonnet-4-5-20250929";
+    private final String modelName = "claude-sonnet-4-6";
 
     /**
      * API key for Anthropic Claude API.
@@ -39,18 +40,10 @@ public class LLMConfiguration {
 
     /**
      * Maximum number of tokens in the response.
-     * Claude models support up to 8192 output tokens.
+     * Claude models support up to 64k output tokens.
      */
     @Builder.Default
-    private final int maxTokens = 4000;
-
-    /**
-     * Temperature for response generation (0.0 to 1.0).
-     * Lower values make output more deterministic.
-     * 0.0-0.3 recommended for code generation.
-     */
-    @Builder.Default
-    private final double temperature = 0.3;
+    private final int maxTokens = 64000;
 
     /**
      * Whether to enable iterative refinement of generated tests.
@@ -63,7 +56,7 @@ public class LLMConfiguration {
      * Maximum number of refinement iterations.
      */
     @Builder.Default
-    private final int maxRefinementIterations = 3;
+    private final int maxRefinementIterations = 1;
 
     /**
      * Whether to validate generated code before returning.
@@ -110,10 +103,6 @@ public class LLMConfiguration {
 
         if (maxTokens <= 0) {
             throw new LLMConfigurationException("Max tokens must be positive", "maxTokens", maxTokens);
-        }
-
-        if (temperature < 0.0 || temperature > 1.0) {
-            throw new LLMConfigurationException("Temperature must be between 0.0 and 1.0", "temperature", temperature);
         }
     }
 

@@ -29,4 +29,8 @@ public class JavaFieldIdentifier extends JavaValueIdentifier implements Exportab
     public String getName() {
         return fieldName;
     }
+
+    public String getType() {
+        return type;
+    }
 }

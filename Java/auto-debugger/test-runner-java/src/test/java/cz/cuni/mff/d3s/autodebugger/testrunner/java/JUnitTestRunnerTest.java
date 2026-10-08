@@ -86,6 +86,7 @@ class JUnitTestRunnerTest {
         assertTrue(result.allTestsPassed());
 
         assertFalse(result.getTestResults().isEmpty());
+        assertTrue(result.getFailedTestsNames().isEmpty());
         TestResult testResult = result.getTestResults().get(0);
         assertEquals(TestStatus.PASSED, testResult.getStatus());
         assertTrue(testResult.isPassed());
@@ -104,6 +105,7 @@ class JUnitTestRunnerTest {
         assertFalse(result.allTestsPassed());
 
         assertFalse(result.getTestResults().isEmpty());
+        assertFalse(result.getFailedTestsNames().isEmpty());
         TestResult testResult = result.getTestResults().get(0);
         assertEquals(TestStatus.FAILED, testResult.getStatus());
         assertTrue(testResult.isFailed());

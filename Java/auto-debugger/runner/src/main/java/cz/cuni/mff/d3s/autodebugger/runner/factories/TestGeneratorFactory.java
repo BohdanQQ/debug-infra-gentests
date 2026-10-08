@@ -20,8 +20,8 @@ import java.nio.file.Path;
 @Slf4j
 public class TestGeneratorFactory {
 
-    // Default model for production use - Claude Sonnet 4.5
-    private static final String DEFAULT_LLM_MODEL = "claude-sonnet-4-5-20250929";
+    // Default model for production use - Claude Sonnet 4.6
+    private static final String DEFAULT_LLM_MODEL = "claude-sonnet-4-6";
 
     public static TestGenerator createTestGenerator(RunConfiguration runConfiguration, String strategyId) {
         return createTestGenerator(runConfiguration, strategyId, null);
@@ -81,11 +81,11 @@ public class TestGeneratorFactory {
                     // For mock model, API key is not required
                     String resolvedApiKey = "mock".equals(llmModelName) ? "mock-key" : getApiKeyFromEnvironmentOrConfig(apiKey);
 
+                    // We use the maximum number of tokens supported by recent models (Claude Sonnet 4.6, Claude Opus 4.7)
                     LLMConfiguration llmConfig = LLMConfiguration.builder()
                             .modelName(llmModelName)
                             .apiKey(resolvedApiKey)
-                            .maxTokens(4000)
-                            .temperature(0.3)
+                            .maxTokens(64000)
                             .build();
 
                     llmGenerator.configure(llmConfig);

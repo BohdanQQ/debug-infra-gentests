@@ -270,10 +270,10 @@ class TraceSerializationTest {
         int numSlots = 100;
         int valuesPerSlot = 100;
 
-        for (int slot = 0; slot < numSlots; slot++) {
+        for (int slotId = 0; slotId < numSlots; slotId++) {
             for (int i = 0; i < valuesPerSlot; i++) {
-                original.addIntValue(slot, slot * 1000 + i);
-                original.addLongValue(slot, (long) slot * 1000000L + i);
+                original.addIntValue(slotId, slotId * 1000 + i);
+                original.addLongValue(slotId, (long) slotId * 1000000L + i);
             }
         }
 
@@ -293,11 +293,11 @@ class TraceSerializationTest {
         long duration = System.currentTimeMillis() - startTime;
 
         // then - all values preserved and completes in reasonable time
-        for (int slot = 0; slot < numSlots; slot++) {
-            assertEquals(valuesPerSlot, deserialized.getIntValues(slot).size(),
-                "Slot " + slot + " should have correct int count");
-            assertEquals(valuesPerSlot, deserialized.getLongValues(slot).size(),
-                "Slot " + slot + " should have correct long count");
+        for (int slotId = 0; slotId < numSlots; slotId++) {
+            assertEquals(valuesPerSlot, deserialized.getIntValues(slotId).size(),
+                "Slot " + slotId + " should have correct int count");
+            assertEquals(valuesPerSlot, deserialized.getLongValues(slotId).size(),
+                "Slot " + slotId + " should have correct long count");
         }
 
         assertTrue(duration < 5000, "Serialization/deserialization should complete within 5 seconds");

@@ -56,11 +56,11 @@ class InstanceFieldEndToEndTest extends DiSLEndToEndTestBase {
         Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
         Map<Integer, JavaValueIdentifier> mapping = deserializeIdentifierMapping(instrumentation.getIdentifiersMappingPath());
 
-        int slot = findSlotForField(mapping, "value");
+        int slotId = findSlotForField(mapping, "value");
 
         // Value=10 at @Before, then value++ makes it 11, captured at @After
         // Using assertSlotContainsIntValues to verify initial value is captured
-        TraceVerifier.assertSlotContainsIntValues(trace, slot, 10);
+        TraceVerifier.assertSlotContainsIntValues(trace, slotId, 10);
     }
 
     @Test
@@ -91,11 +91,11 @@ class InstanceFieldEndToEndTest extends DiSLEndToEndTestBase {
         Trace trace = deserializeTrace(analysisResult.getTraceFilePath());
         Map<Integer, JavaValueIdentifier> mapping = deserializeIdentifierMapping(instrumentation.getIdentifiersMappingPath());
 
-        int slot = findSlotForField(mapping, "value");
+        int slotId = findSlotForField(mapping, "value");
 
         // Value=5 at @Before (first call), 6 at @After, 15 at @Before (second call), 16 at @After
         // Using assertSlotContainsIntValues to verify initial values are captured
-        TraceVerifier.assertSlotContainsIntValues(trace, slot, 5, 15);
+        TraceVerifier.assertSlotContainsIntValues(trace, slotId, 5, 15);
     }
 
     @Test
@@ -129,8 +129,8 @@ class InstanceFieldEndToEndTest extends DiSLEndToEndTestBase {
         assertEquals(1, mapping.size(), "Mapping should contain exactly 1 entry");
 
         // Verify slot maps to the field
-        int slot = findSlotForField(mapping, "value");
-        JavaValueIdentifier value = mapping.get(slot);
+        int slotId = findSlotForField(mapping, "value");
+        JavaValueIdentifier value = mapping.get(slotId);
         assertInstanceOf(JavaFieldIdentifier.class, value);
         JavaFieldIdentifier fieldId = (JavaFieldIdentifier) value;
         assertEquals("value", fieldId.getFieldName());

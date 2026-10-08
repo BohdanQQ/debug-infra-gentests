@@ -82,13 +82,13 @@ class TraceIdentifierMapperTest {
             mapper = new TraceIdentifierMapper(trace, identifierMapping);
 
             // When
-            Set<Integer> slots = mapper.getSlots();
+            Set<Integer> slotIDs = mapper.getSlotIDs();
 
             // Then
-            assertEquals(3, slots.size());
-            assertTrue(slots.contains(0));
-            assertTrue(slots.contains(1));
-            assertTrue(slots.contains(2));
+            assertEquals(3, slotIDs.size());
+            assertTrue(slotIDs.contains(0));
+            assertTrue(slotIDs.contains(1));
+            assertTrue(slotIDs.contains(2));
         }
 
         @Test
@@ -307,11 +307,11 @@ class TraceIdentifierMapperTest {
             mapper = new TraceIdentifierMapper(trace, identifierMapping);
 
             // When
-            Set<Integer> slots = mapper.getSlots();
+            Set<Integer> slotIDs = mapper.getSlotIDs();
 
             // Then
-            assertNotNull(slots);
-            assertTrue(slots.isEmpty());
+            assertNotNull(slotIDs);
+            assertTrue(slotIDs.isEmpty());
         }
 
         @Test
@@ -365,13 +365,13 @@ class TraceIdentifierMapperTest {
             mapper = new TraceIdentifierMapper(trace, identifierMapping);
 
             // When
-            Set<Integer> slots = mapper.getSlots();
+            Set<Integer> slotIDs = mapper.getSlotIDs();
 
             // Then
-            assertEquals(3, slots.size());
-            assertTrue(slots.contains(0));
-            assertTrue(slots.contains(1));
-            assertTrue(slots.contains(2));
+            assertEquals(3, slotIDs.size());
+            assertTrue(slotIDs.contains(0));
+            assertTrue(slotIDs.contains(1));
+            assertTrue(slotIDs.contains(2));
         }
 
         @Test

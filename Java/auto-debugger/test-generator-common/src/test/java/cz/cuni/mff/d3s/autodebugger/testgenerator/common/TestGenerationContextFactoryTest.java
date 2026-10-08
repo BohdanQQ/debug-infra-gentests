@@ -113,9 +113,9 @@ class TestGenerationContextFactoryTest {
 
         // Verify default settings
         assertEquals("junit5", context.getTestFramework());
-        assertEquals(50, context.getMaxTestCount());
+        assertEquals(Integer.MAX_VALUE, context.getMaxTestCount());
         assertTrue(context.isGenerateEdgeCases());
-        assertTrue(context.isGenerateNegativeTests());
+        assertFalse(context.isGenerateNegativeTests());
         assertEquals(TestNamingStrategy.DESCRIPTIVE, context.getNamingStrategy());
     }
 
@@ -230,7 +230,7 @@ class TestGenerationContextFactoryTest {
 
         assertNotNull(context);
         assertEquals("junit5", context.getTestFramework()); // Default value
-        assertEquals(50, context.getMaxTestCount()); // Default value
+        assertEquals(Integer.MAX_VALUE, context.getMaxTestCount()); // Default value
 }
 
     @Test

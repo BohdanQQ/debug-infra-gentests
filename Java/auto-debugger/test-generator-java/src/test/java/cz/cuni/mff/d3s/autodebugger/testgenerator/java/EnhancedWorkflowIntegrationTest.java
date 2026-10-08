@@ -169,7 +169,7 @@ class EnhancedWorkflowIntegrationTest {
         
         // 2. Generate tests with both approaches
         NaiveTraceBasedGenerator naiveGenerator = new NaiveTraceBasedGenerator(identifierMapping);
-        List<Path> naiveFiles = naiveGenerator.generateTests(legacyTrace, context);
+        List<Path> naiveFiles = naiveGenerator.generateTests(legacyTrace, tempDir, context);
         
         TemporalTraceBasedGenerator enhancedGenerator = new TemporalTraceBasedGenerator();
         List<Path> enhancedFiles = enhancedGenerator.generateTests(enhancedTrace, context);

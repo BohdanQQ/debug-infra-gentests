@@ -181,7 +181,7 @@ public class Orchestrator {
             Object obj = ois.readObject();
             if (obj instanceof IndexedTrace indexedTrace) {
                 log.info("Deserialized IndexedTrace with {} slots and {} events",
-                    indexedTrace.getAllSlots().size(), indexedTrace.getTotalEventCount());
+                    indexedTrace.getAllSlotIDs().size(), indexedTrace.getTotalEventCount());
                 return indexedTrace;
             } else {
                 log.error("Expected IndexedTrace but got: {}", obj.getClass().getName());

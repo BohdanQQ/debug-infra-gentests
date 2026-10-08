@@ -134,7 +134,7 @@ class NaiveTraceBasedGeneratorRunConfigurationTest {
 
         // When - generate tests both ways
         List<Path> configBasedFiles = generator.generateTests(trace, runConfiguration);
-        List<Path> contextBasedFiles = generator.generateTests(trace, manualContext);
+        List<Path> contextBasedFiles = generator.generateTests(trace, tempDir, manualContext);
 
         // Then - both should succeed and produce similar results
         assertEquals(1, configBasedFiles.size());
@@ -194,6 +194,7 @@ class NaiveTraceBasedGeneratorRunConfigurationTest {
         // Verify the content is well-formed
         assertTrue(content.contains("import"), "Should contain import statements");
         assertTrue(content.contains("public class"), "Should contain class declaration");
-        assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
+        // PP: setUp method with @BeforeEach annotation does not have to be generated in the current version
+        //assertTrue(content.contains("@BeforeEach"), "Should contain setup method");
     }
 }

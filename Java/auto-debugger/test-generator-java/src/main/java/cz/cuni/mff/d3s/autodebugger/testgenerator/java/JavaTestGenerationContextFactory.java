@@ -89,7 +89,7 @@ public class JavaTestGenerationContextFactory extends TestGenerationContextFacto
     public static TestGenerationContext createForTraceBasedGeneration(JavaRunConfiguration javaConfig) {
         TestGenerationSettings traceSettings = TestGenerationSettings.builder()
                 .testFramework("junit5")
-                .maxTestCount(20)
+                .maxTestCount(Integer.MAX_VALUE)
                 .generateEdgeCases(true)
                 .generateNegativeTests(false) // Trace data typically doesn't include error cases
                 .namingStrategy(cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestNamingStrategy.DESCRIPTIVE)
@@ -109,9 +109,9 @@ public class JavaTestGenerationContextFactory extends TestGenerationContextFacto
     public static TestGenerationContext createForLLMBasedGeneration(JavaRunConfiguration javaConfig) {
         TestGenerationSettings llmSettings = TestGenerationSettings.builder()
                 .testFramework("junit5")
-                .maxTestCount(10)
+                .maxTestCount(Integer.MAX_VALUE)
                 .generateEdgeCases(true)
-                .generateNegativeTests(true)
+                .generateNegativeTests(false)
                 .namingStrategy(cz.cuni.mff.d3s.autodebugger.testgenerator.common.TestNamingStrategy.DESCRIPTIVE)
                 .generateParameterizedTests(true)
                 .includePerformanceAssertions(false)

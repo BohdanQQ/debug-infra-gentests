@@ -18,6 +18,7 @@ dependencies {
     implementation(platform(libs.log4j.bom))
     implementation(libs.log4j)
     implementation(libs.anthropic.java)
+    implementation(libs.javaparser.core)
     testImplementation(platform(libs.junit.bom))
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testImplementation("org.junit.jupiter:junit-jupiter-engine")

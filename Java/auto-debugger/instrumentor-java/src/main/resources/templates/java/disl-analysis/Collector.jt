@@ -68,16 +68,16 @@ public class Collector extends RemoteAnalysis {
 
 
 
-  public void collectInt(final int slot, final int i) {
+  public void collectInt(final int slotId, final int i) {
     printPid();
-    System.out.println("*** COLLECTOR: collectInt called with slot=" + slot + ", value=" + i + " ***");
+    System.out.println("*** COLLECTOR: collectInt called with trace slotID=" + slotId + ", value=" + i + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting int: %s", i)));
 
     // Always store in fallback storage (last values)
-    collectedValues.put(slot, i);
+    collectedValues.put(slotId, i);
 
     // Store in current invocation
-    currentInvocation.put(slot, i);
+    currentInvocation.put(slotId, i);
 
     // Check if we have collected all parameters for this invocation
     // For naive mode, we expect to collect all parameters before completing the invocation
@@ -93,7 +93,7 @@ public class Collector extends RemoteAnalysis {
 
     // Also store in Trace if available
     if (trace != null) {
-      trace.addIntValue(slot, i);
+      trace.addIntValue(slotId, i);
     }
 
     currentEventIndex++;
@@ -106,13 +106,13 @@ public class Collector extends RemoteAnalysis {
   }
 
 
-  public void collectByte(final int slot, final byte b) {
+  public void collectByte(final int slotId, final byte b) {
     printPid();
-    System.out.println("*** COLLECTOR: collectByte called with slot=" + slot + ", value=" + b + " ***");
+    System.out.println("*** COLLECTOR: collectByte called with trace slotID=" + slotId + ", value=" + b + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting byte: %s", b)));
 
-    collectedValues.put(slot, b);
-    currentInvocation.put(slot, b);
+    collectedValues.put(slotId, b);
+    currentInvocation.put(slotId, b);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -122,19 +122,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addByteValue(slot, b);
+      trace.addByteValue(slotId, b);
     }
 
     currentEventIndex++;
   }
 
-  public void collectChar(final int slot, final char c) {
+  public void collectChar(final int slotId, final char c) {
     printPid();
-    System.out.println("*** COLLECTOR: collectChar called with slot=" + slot + ", value=" + c + " ***");
+    System.out.println("*** COLLECTOR: collectChar called with trace slotID=" + slotId + ", value=" + c + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting char: %s", c)));
 
-    collectedValues.put(slot, c);
-    currentInvocation.put(slot, c);
+    collectedValues.put(slotId, c);
+    currentInvocation.put(slotId, c);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -144,19 +144,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addCharValue(slot, c);
+      trace.addCharValue(slotId, c);
     }
 
     currentEventIndex++;
   }
 
-  public void collectShort(final int slot, final short s) {
+  public void collectShort(final int slotId, final short s) {
     printPid();
-    System.out.println("*** COLLECTOR: collectShort called with slot=" + slot + ", value=" + s + " ***");
+    System.out.println("*** COLLECTOR: collectShort called with trace slotID=" + slotId + ", value=" + s + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting short: %s", s)));
 
-    collectedValues.put(slot, s);
-    currentInvocation.put(slot, s);
+    collectedValues.put(slotId, s);
+    currentInvocation.put(slotId, s);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -166,19 +166,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addShortValue(slot, s);
+      trace.addShortValue(slotId, s);
     }
 
     currentEventIndex++;
   }
 
-  public void collectLong(final int slot, final long l) {
+  public void collectLong(final int slotId, final long l) {
     printPid();
-    System.out.println("*** COLLECTOR: collectLong called with slot=" + slot + ", value=" + l + " ***");
+    System.out.println("*** COLLECTOR: collectLong called with trace slotID=" + slotId + ", value=" + l + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting long: %s", l)));
 
-    collectedValues.put(slot, l);
-    currentInvocation.put(slot, l);
+    collectedValues.put(slotId, l);
+    currentInvocation.put(slotId, l);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -188,19 +188,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addLongValue(slot, l);
+      trace.addLongValue(slotId, l);
     }
 
     currentEventIndex++;
   }
 
-  public void collectFloat(final int slot, final float f) {
+  public void collectFloat(final int slotId, final float f) {
     printPid();
-    System.out.println("*** COLLECTOR: collectFloat called with slot=" + slot + ", value=" + f + " ***");
+    System.out.println("*** COLLECTOR: collectFloat called with trace slotID=" + slotId + ", value=" + f + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting float: %s", f)));
 
-    collectedValues.put(slot, f);
-    currentInvocation.put(slot, f);
+    collectedValues.put(slotId, f);
+    currentInvocation.put(slotId, f);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -210,19 +210,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addFloatValue(slot, f);
+      trace.addFloatValue(slotId, f);
     }
 
     currentEventIndex++;
   }
 
-  public void collectBoolean(final int slot, final boolean z) {
+  public void collectBoolean(final int slotId, final boolean z) {
     printPid();
-    System.out.println("*** COLLECTOR: collectBoolean called with slot=" + slot + ", value=" + z + " ***");
+    System.out.println("*** COLLECTOR: collectBoolean called with trace slotID=" + slotId + ", value=" + z + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting boolean: %s", z)));
 
-    collectedValues.put(slot, z);
-    currentInvocation.put(slot, z);
+    collectedValues.put(slotId, z);
+    currentInvocation.put(slotId, z);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -232,15 +232,15 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addBooleanValue(slot, z);
+      trace.addBooleanValue(slotId, z);
     }
 
     currentEventIndex++;
   }
 
-  public void collectString(final int slot, final ShadowObject s) {
+  public void collectString(final int slotId, final ShadowObject s) {
     printPid();
-    System.out.println("*** COLLECTOR: collectString called with slot=" + slot + ", value=" + s + " ***");
+    System.out.println("*** COLLECTOR: collectString called with trace slotID=" + slotId + ", value=" + s + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting string: %s", s)));
 
     // Extract the actual String value from ShadowString
@@ -249,8 +249,8 @@ public class Collector extends RemoteAnalysis {
       stringValue = shadowString.toString();
     }
 
-    collectedValues.put(slot, stringValue);
-    currentInvocation.put(slot, stringValue);
+    collectedValues.put(slotId, stringValue);
+    currentInvocation.put(slotId, stringValue);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -261,19 +261,19 @@ public class Collector extends RemoteAnalysis {
 
     // Add to trace if available
     if (trace != null && stringValue != null) {
-      trace.addStringValue(slot, stringValue);
+      trace.addStringValue(slotId, stringValue);
     }
 
     currentEventIndex++;
   }
 
-  public void collectDouble(final int slot, final double d) {
+  public void collectDouble(final int slotId, final double d) {
     printPid();
-    System.out.println("*** COLLECTOR: collectDouble called with slot=" + slot + ", value=" + d + " ***");
+    System.out.println("*** COLLECTOR: collectDouble called with trace slotID=" + slotId + ", value=" + d + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting double: %s", d)));
 
-    collectedValues.put(slot, d);
-    currentInvocation.put(slot, d);
+    collectedValues.put(slotId, d);
+    currentInvocation.put(slotId, d);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -283,19 +283,19 @@ public class Collector extends RemoteAnalysis {
     }
 
     if (trace != null) {
-      trace.addDoubleValue(slot, d);
+      trace.addDoubleValue(slotId, d);
     }
 
     currentEventIndex++;
   }
 
-  public void collectObject(final int slot, final ShadowObject obj) {
+  public void collectObject(final int slotId, final ShadowObject obj) {
     printPid();
-    System.out.println("*** COLLECTOR: collectObject called with slot=" + slot + ", value=" + obj + " ***");
+    System.out.println("*** COLLECTOR: collectObject called with trace slotID=" + slotId + ", value=" + obj + " ***");
     System.out.println(String.format(messageFormat, processName, String.format("Collecting object: %s", obj)));
 
-    collectedValues.put(slot, obj);
-    currentInvocation.put(slot, obj);
+    collectedValues.put(slotId, obj);
+    currentInvocation.put(slotId, obj);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -307,7 +307,7 @@ public class Collector extends RemoteAnalysis {
     currentEventIndex++;
   }
 
-  public void collectObjectJson(final int slot, final ShadowObject jsonData) {
+  public void collectObjectJson(final int slotId, final ShadowObject jsonData) {
     printPid();
 
     String json = null;
@@ -320,7 +320,7 @@ public class Collector extends RemoteAnalysis {
       return;
     }
 
-    System.out.println("*** COLLECTOR: collectObjectJson slot=" + slot + " ***");
+    System.out.println("*** COLLECTOR: collectObjectJson slotID=" + slotId + " ***");
     if (DEBUG) {
       System.out.println("*** COLLECTOR: JSON length=" + json.length() + " ***");
     }
@@ -334,8 +334,8 @@ public class Collector extends RemoteAnalysis {
     }
 
     // Store in current invocation (matches existing pattern)
-    collectedValues.put(slot, snapshot);
-    currentInvocation.put(slot, snapshot);
+    collectedValues.put(slotId, snapshot);
+    currentInvocation.put(slotId, snapshot);
 
     if (isInvocationComplete()) {
       Map<Integer, Object> completedInvocation = new HashMap<>(currentInvocation);
@@ -347,7 +347,7 @@ public class Collector extends RemoteAnalysis {
 
     // If trace is initialized, add directly
     if (trace != null) {
-      trace.addObjectValue(slot, snapshot);
+      trace.addObjectValue(slotId, snapshot);
     }
 
     currentEventIndex++;
@@ -382,7 +382,7 @@ public class Collector extends RemoteAnalysis {
           Map<Integer, Object> invocation = allInvocations.get(i);
           System.out.println(String.format(messageFormat, processName, "Invocation " + (i + 1) + ":"));
           for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-            System.out.println(String.format(messageFormat, processName, "  Slot " + entry.getKey() + ": " + entry.getValue()));
+            System.out.println(String.format(messageFormat, processName, "  Slot ID " + entry.getKey() + ": " + entry.getValue()));
           }
         }
       }
@@ -430,28 +430,28 @@ public class Collector extends RemoteAnalysis {
     for (Map<Integer, Object> invocation : invocations) {
       for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
         Object value = entry.getValue();
-        int slot = entry.getKey();
+        int slotId = entry.getKey();
 
         if (value instanceof Integer intValue) {
-          trace.addIntValue(slot, intValue);
+          trace.addIntValue(slotId, intValue);
         } else if (value instanceof Byte byteValue) {
-          trace.addByteValue(slot, byteValue);
+          trace.addByteValue(slotId, byteValue);
         } else if (value instanceof Character charValue) {
-          trace.addCharValue(slot, charValue);
+          trace.addCharValue(slotId, charValue);
         } else if (value instanceof Short shortValue) {
-          trace.addShortValue(slot, shortValue);
+          trace.addShortValue(slotId, shortValue);
         } else if (value instanceof Long longValue) {
-          trace.addLongValue(slot, longValue);
+          trace.addLongValue(slotId, longValue);
         } else if (value instanceof Float floatValue) {
-          trace.addFloatValue(slot, floatValue);
+          trace.addFloatValue(slotId, floatValue);
         } else if (value instanceof Double doubleValue) {
-          trace.addDoubleValue(slot, doubleValue);
+          trace.addDoubleValue(slotId, doubleValue);
         } else if (value instanceof Boolean boolValue) {
-          trace.addBooleanValue(slot, boolValue);
+          trace.addBooleanValue(slotId, boolValue);
         } else if (value instanceof String stringValue) {
-          trace.addStringValue(slot, stringValue);
+          trace.addStringValue(slotId, stringValue);
         } else if (value instanceof ObjectSnapshot objSnapshot) {
-          trace.addObjectValue(slot, objSnapshot);
+          trace.addObjectValue(slotId, objSnapshot);
         }
       }
     }
@@ -472,15 +472,15 @@ public class Collector extends RemoteAnalysis {
     for (Map<Integer, Object> invocation : invocations) {
       // Each invocation gets a unique event index
       for (Map.Entry<Integer, Object> entry : invocation.entrySet()) {
-        int slot = entry.getKey();
+        int slotId = entry.getKey();
         Object value = entry.getValue();
-        indexedTrace.addValue(slot, eventIndex, value);
+        indexedTrace.addValue(slotId, eventIndex, value);
       }
       eventIndex++;
     }
 
     System.out.println(String.format(messageFormat, processName,
-        "Built IndexedTrace with " + indexedTrace.getAllSlots().size() + " slots and " +
+        "Built IndexedTrace with " + indexedTrace.getAllSlotIDs().size() + " slots and " +
         indexedTrace.getTotalEventCount() + " events"));
 
     return indexedTrace;

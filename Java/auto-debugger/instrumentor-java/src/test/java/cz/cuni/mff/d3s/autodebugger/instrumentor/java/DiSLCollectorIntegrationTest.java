@@ -94,40 +94,40 @@ class DiSLCollectorIntegrationTest {
               private final String outputFilePath = "%s";
               private Trace trace = new Trace();
             
-              public void collectByte(final int slot, final byte b) {
-                writeToFile("byte:" + slot + ":" + b);
+              public void collectByte(final int slotId, final byte b) {
+                writeToFile("byte:" + slotId + ":" + b);
               }
             
-              public void collectChar(final int slot, final char c) {
-                writeToFile("char:" + slot + ":" + c);
+              public void collectChar(final int slotId, final char c) {
+                writeToFile("char:" + slotId + ":" + c);
               }
             
-              public void collectShort(final int slot, final short s) {
-                writeToFile("short:" + slot + ":" + s);
+              public void collectShort(final int slotId, final short s) {
+                writeToFile("short:" + slotId + ":" + s);
               }
             
-              public void collectInt(final int slot, final int i) {
-                writeToFile("int:" + slot + ":" + i);
+              public void collectInt(final int slotId, final int i) {
+                writeToFile("int:" + slotId + ":" + i);
               }
             
-              public void collectLong(final int slot, final long l) {
-                writeToFile("long:" + slot + ":" + l);
+              public void collectLong(final int slotId, final long l) {
+                writeToFile("long:" + slotId + ":" + l);
               }
             
-              public void collectFloat(final int slot, final float f) {
-                writeToFile("float:" + slot + ":" + f);
+              public void collectFloat(final int slotId, final float f) {
+                writeToFile("float:" + slotId + ":" + f);
               }
             
-              public void collectDouble(final int slot, final double d) {
-                writeToFile("double:" + slot + ":" + d);
+              public void collectDouble(final int slotId, final double d) {
+                writeToFile("double:" + slotId + ":" + d);
               }
             
-              public void collectBoolean(final int slot, final boolean z) {
-                writeToFile("boolean:" + slot + ":" + z);
+              public void collectBoolean(final int slotId, final boolean z) {
+                writeToFile("boolean:" + slotId + ":" + z);
               }
             
-              public void collectString(final int slot, final ShadowString str) {
-                writeToFile("string:" + slot + ":" + str.toString());
+              public void collectString(final int slotId, final ShadowString str) {
+                writeToFile("string:" + slotId + ":" + str.toString());
               }
             
               private void writeToFile(String data) {
@@ -175,58 +175,58 @@ class DiSLCollectorIntegrationTest {
                   private static short doubleId = REDispatch.registerMethod("Collector.collectDouble");
                   private static short booleanId = REDispatch.registerMethod("Collector.collectBoolean");
 
-                  public static void collectByte(final int slot, final byte b) {
+                  public static void collectByte(final int slotId, final byte b) {
                     REDispatch.analysisStart(byteId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendByte(b);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectChar(final int slot, final char c) {
+                  public static void collectChar(final int slotId, final char c) {
                     REDispatch.analysisStart(charId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendChar(c);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectShort(final int slot, final short s) {
+                  public static void collectShort(final int slotId, final short s) {
                     REDispatch.analysisStart(shortId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendShort(s);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectInt(final int slot, final int i) {
+                  public static void collectInt(final int slotId, final int i) {
                     REDispatch.analysisStart(intId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendInt(i);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectLong(final int slot, final long l) {
+                  public static void collectLong(final int slotId, final long l) {
                     REDispatch.analysisStart(longId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendLong(l);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectFloat(final int slot, final float f) {
+                  public static void collectFloat(final int slotId, final float f) {
                     REDispatch.analysisStart(floatId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendFloat(f);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectDouble(final int slot, final double d) {
+                  public static void collectDouble(final int slotId, final double d) {
                     REDispatch.analysisStart(doubleId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendDouble(d);
                     REDispatch.analysisEnd();
                   }
 
-                  public static void collectBoolean(final int slot, final boolean z) {
+                  public static void collectBoolean(final int slotId, final boolean z) {
                     REDispatch.analysisStart(booleanId);
-                    REDispatch.sendInt(slot);
+                    REDispatch.sendInt(slotId);
                     REDispatch.sendBoolean(z);
                     REDispatch.analysisEnd();
                   }

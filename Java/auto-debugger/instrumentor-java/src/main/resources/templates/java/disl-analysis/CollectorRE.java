@@ -64,70 +64,70 @@ public class CollectorRE {
     REDispatch.analysisEnd();
   }
 
-  public static void collectByte(final int slot, final byte b) {
+  public static void collectByte(final int slotId, final byte b) {
     REDispatch.analysisStart(collectByteId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendByte(b);
     REDispatch.analysisEnd();
   }
 
-  public static void collectChar(final int slot, final char c) {
+  public static void collectChar(final int slotId, final char c) {
     REDispatch.analysisStart(collectCharId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendChar(c);
     REDispatch.analysisEnd();
   }
 
-  public static void collectShort(final int slot, final short s) {
+  public static void collectShort(final int slotId, final short s) {
     REDispatch.analysisStart(collectShortId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendShort(s);
     REDispatch.analysisEnd();
   }
 
-  public static void collectInt(final int slot, final int i) {
+  public static void collectInt(final int slotId, final int i) {
     REDispatch.analysisStart(collectIntId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendInt(i);
     REDispatch.analysisEnd();
   }
 
-  public static void collectLong(final int slot, final long l) {
+  public static void collectLong(final int slotId, final long l) {
     REDispatch.analysisStart(collectLongId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendLong(l);
     REDispatch.analysisEnd();
   }
 
-  public static void collectFloat(final int slot, final float f) {
+  public static void collectFloat(final int slotId, final float f) {
     REDispatch.analysisStart(collectFloatId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendFloat(f);
     REDispatch.analysisEnd();
   }
 
-  public static void collectDouble(final int slot, final double d) {
+  public static void collectDouble(final int slotId, final double d) {
     REDispatch.analysisStart(collectDoubleId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendDouble(d);
     REDispatch.analysisEnd();
   }
 
-  public static void collectBoolean(final int slot, final boolean z) {
+  public static void collectBoolean(final int slotId, final boolean z) {
     REDispatch.analysisStart(collectBooleanId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendBoolean(z);
     REDispatch.analysisEnd();
   }
 
-  public static void collectString(final int slot, final Object s) {
+  public static void collectString(final int slotId, final Object s) {
     REDispatch.analysisStart(collectStringId);
-    REDispatch.sendInt(slot);
+    REDispatch.sendInt(slotId);
     REDispatch.sendObjectPlusData(s);
     REDispatch.analysisEnd();
   }
 
-  public static void collectObject(final int slot, final Object obj) {
+  public static void collectObject(final int slotId, final Object obj) {
     if (obj == null) {
       return;  // Skip null objects
     }
@@ -150,7 +150,7 @@ public class CollectorRE {
       }
 
       REDispatch.analysisStart(collectObjectJsonId);
-      REDispatch.sendInt(slot);
+      REDispatch.sendInt(slotId);
       REDispatch.sendObjectPlusData(json);
       REDispatch.analysisEnd();
     } catch (Exception e) {

@@ -6,7 +6,7 @@ cd build
 cmake \
     -G Ninja ../llvm-project/llvm \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-    -DLLVM_ENABLE_PROJECTS="clang;llvm" \
+    -DLLVM_ENABLE_PROJECTS="clang;llvm;lld" \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_BUILD_TESTS=ON \
     -DLLVM_TARGETS_TO_BUILD=host \

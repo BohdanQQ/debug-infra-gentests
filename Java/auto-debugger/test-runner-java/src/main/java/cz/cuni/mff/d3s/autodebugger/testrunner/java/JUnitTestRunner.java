@@ -73,6 +73,11 @@ public class JUnitTestRunner implements TestRunner {
             int passed = (int) testResults.stream().mapToLong(r -> r.isPassed() ? 1 : 0).sum();
             int failed = (int) testResults.stream().mapToLong(r -> r.isFailed() ? 1 : 0).sum();
             int skipped = (int) testResults.stream().mapToLong(r -> r.isSkipped() ? 1 : 0).sum();
+
+            List<String> failedTests = new ArrayList<>();
+            for (TestResult r : testResults) {
+                if (r.isFailed()) failedTests.add(r.getFullTestName());
+            }
             
             TestSuiteStatus overallStatus = failed > 0 ? TestSuiteStatus.FAILED : TestSuiteStatus.PASSED;
             
@@ -86,6 +91,7 @@ public class JUnitTestRunner implements TestRunner {
                     .passedCount(passed)
                     .failedCount(failed)
                     .skippedCount(skipped)
+                    .failedTestsNames(failedTests)
                     .rawOutput("Test execution completed")
                     .build();
                     
@@ -156,6 +162,11 @@ public class JUnitTestRunner implements TestRunner {
             int passed = (int) testResults.stream().mapToLong(r -> r.isPassed() ? 1 : 0).sum();
             int failed = (int) testResults.stream().mapToLong(r -> r.isFailed() ? 1 : 0).sum();
             int skipped = (int) testResults.stream().mapToLong(r -> r.isSkipped() ? 1 : 0).sum();
+
+            List<String> failedTests = new ArrayList<>();
+            for (TestResult r : testResults) {
+                if (r.isFailed()) failedTests.add(r.getFullTestName());
+            }
             
             TestSuiteStatus overallStatus = failed > 0 ? TestSuiteStatus.FAILED : TestSuiteStatus.PASSED;
             
@@ -169,6 +180,7 @@ public class JUnitTestRunner implements TestRunner {
                     .passedCount(passed)
                     .failedCount(failed)
                     .skippedCount(skipped)
+                    .failedTestsNames(failedTests)
                     .rawOutput("Single test execution completed")
                     .build();
                     
@@ -179,6 +191,7 @@ public class JUnitTestRunner implements TestRunner {
             
             return TestExecutionResult.builder()
                     .overallStatus(TestSuiteStatus.ERROR)
+                    .testResults(testResults)
                     .totalExecutionTime(totalTime)
                     .executionStartTime(startTime)
                     .executionEndTime(endTime)

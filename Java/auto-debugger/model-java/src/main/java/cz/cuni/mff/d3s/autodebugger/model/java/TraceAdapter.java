@@ -38,12 +38,12 @@ public class TraceAdapter {
 
         // Convert each slot's values to the enhanced format
         for (Map.Entry<Integer, JavaValueIdentifier> entry : identifierMapping.entrySet()) {
-            Integer slot = entry.getKey();
+            Integer slotId = entry.getKey();
             JavaValueIdentifier identifier = entry.getValue();
 
             // Convert values based on the identifier type
             String type = identifier.getType();
-            eventIndex = convertSlotValues(legacyTrace, enhancedTrace, slot, identifier, type, eventIndex);
+            eventIndex = convertSlotValues(legacyTrace, enhancedTrace, slotId, identifier, type, eventIndex);
         }
 
         // Add metadata about the conversion
@@ -83,17 +83,17 @@ public class TraceAdapter {
         int skippedSlots = 0;
 
         // Process each slot in the indexed trace
-        for (Integer slot : indexedTrace.getAllSlots()) {
-            JavaValueIdentifier identifier = identifierMapping.get(slot);
+        for (Integer slotId : indexedTrace.getAllSlotIDs()) {
+            JavaValueIdentifier identifier = identifierMapping.get(slotId);
 
             if (identifier == null) {
-                log.warn("No identifier mapping found for slot {}, skipping this slot", slot);
+                log.warn("No identifier mapping found for slot {}, skipping this slot", slotId);
                 skippedSlots++;
                 continue;
             }
 
             // Get all (eventIndex, value) pairs for this slot
-            NavigableMap<Integer, Object> slotValues = indexedTrace.getValues(slot);
+            NavigableMap<Integer, Object> slotValues = indexedTrace.getValues(slotId);
 
             // Transfer each value with its original event index
             for (Map.Entry<Integer, Object> entry : slotValues.entrySet()) {
@@ -104,14 +104,14 @@ public class TraceAdapter {
                 totalValuesConverted++;
 
                 log.debug("Converted slot {} -> identifier {} at event {}: {}",
-                         slot, identifier.getName(), eventIndex, value);
+                         slotId, identifier.getName(), eventIndex, value);
             }
         }
 
         // Add metadata about the conversion
         temporalTrace.addMetadata("converted_from", "indexed_trace");
         temporalTrace.addMetadata("conversion_timestamp", System.currentTimeMillis());
-        temporalTrace.addMetadata("original_slot_count", indexedTrace.getAllSlots().size());
+        temporalTrace.addMetadata("original_slot_count", indexedTrace.getAllSlotIDs().size());
         temporalTrace.addMetadata("mapped_slot_count", identifierMapping.size());
         temporalTrace.addMetadata("skipped_slot_count", skippedSlots);
         temporalTrace.addMetadata("preserves_true_event_indices", true);
@@ -126,62 +126,62 @@ public class TraceAdapter {
      * Converts values from a specific slot in the legacy trace to the enhanced trace.
      */
     private static int convertSlotValues(Trace legacyTrace, TemporalTrace enhancedTrace,
-                                         Integer slot, JavaValueIdentifier identifier,
+                                         Integer slotId, JavaValueIdentifier identifier,
                                          String type, int startEventIndex) {
         int currentEventIndex = startEventIndex;
 
         switch (type.toLowerCase()) {
             case "byte":
-                Set<Byte> byteValues = legacyTrace.getByteValues(slot);
+                Set<Byte> byteValues = legacyTrace.getByteValues(slotId);
                 for (Byte value : byteValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "char":
-                Set<Character> charValues = legacyTrace.getCharValues(slot);
+                Set<Character> charValues = legacyTrace.getCharValues(slotId);
                 for (Character value : charValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "short":
-                Set<Short> shortValues = legacyTrace.getShortValues(slot);
+                Set<Short> shortValues = legacyTrace.getShortValues(slotId);
                 for (Short value : shortValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "int":
-                Set<Integer> intValues = legacyTrace.getIntValues(slot);
+                Set<Integer> intValues = legacyTrace.getIntValues(slotId);
                 for (Integer value : intValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "long":
-                Set<Long> longValues = legacyTrace.getLongValues(slot);
+                Set<Long> longValues = legacyTrace.getLongValues(slotId);
                 for (Long value : longValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "float":
-                Set<Float> floatValues = legacyTrace.getFloatValues(slot);
+                Set<Float> floatValues = legacyTrace.getFloatValues(slotId);
                 for (Float value : floatValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "double":
-                Set<Double> doubleValues = legacyTrace.getDoubleValues(slot);
+                Set<Double> doubleValues = legacyTrace.getDoubleValues(slotId);
                 for (Double value : doubleValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
                 break;
 
             case "boolean":
-                Set<Boolean> booleanValues = legacyTrace.getBooleanValues(slot);
+                Set<Boolean> booleanValues = legacyTrace.getBooleanValues(slotId);
                 for (Boolean value : booleanValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }
@@ -189,7 +189,7 @@ public class TraceAdapter {
 
             case "string":
             case "java.lang.string":
-                Set<String> stringValues = legacyTrace.getStringValues(slot);
+                Set<String> stringValues = legacyTrace.getStringValues(slotId);
                 for (String value : stringValues) {
                     enhancedTrace.addValue(identifier, currentEventIndex++, value);
                 }

@@ -36,6 +36,10 @@ tasks.test {
     useJUnitPlatform()
 }
 
+tasks.named<JavaExec>("run") {
+    project.findProperty("autodbgArgs")?.let { value -> args(value.toString().split('\u0001')) }
+}
+
 application {
     mainClass.set("cz.cuni.mff.d3s.autodebugger.runner.Runner")
 }

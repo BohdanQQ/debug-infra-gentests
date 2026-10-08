@@ -6,6 +6,9 @@ import cz.cuni.mff.d3s.autodebugger.runner.orchestrator.Orchestrator;
 import lombok.extern.slf4j.Slf4j;
 import picocli.CommandLine;
 
+import java.util.List;
+import java.util.ArrayList;
+
 /**
  * Main entry point for the auto-debugger application.
  * Handles command-line argument parsing using PicoCLI and delegates execution
@@ -27,6 +30,10 @@ public class Runner {
         return;
       }
 
+      // application arguments that start with '-' have to be put inside double quotes (""), otherwise the picocli.CommandLine library refuses to handle them
+      // here we need to strip the double quotes if present (a single pair) from the parsed values of application arguments, before we give the argument values to the application main class
+      postprocessApplicationArguments(arguments);
+
       run(arguments);
 
     } catch (CommandLine.ParameterException e) {
@@ -39,6 +46,27 @@ public class Runner {
       System.err.println("Error: " + e.getMessage());
       System.exit(1);
     }
+  }
+
+  /**
+   * Postprocesses the parsed application runtime arguments.
+   * If an argument value starts and ends with the double quote character, then it is removed from both sides.
+   * For explanation, see the comment at the call site of this method.
+   */
+  private static void postprocessApplicationArguments(Arguments arguments) {
+    List<String> newRunArgs = new ArrayList<>();
+
+    for (String arg : arguments.runtimeArguments) {
+      if (arg.startsWith("\"") && arg.endsWith("\"")) {
+        newRunArgs.add(arg.substring(1, arg.length()-1));
+      }
+      else {
+        // nothing has to be done in this case
+        newRunArgs.add(arg);
+      }
+    }
+
+    arguments.runtimeArguments = newRunArgs;
   }
 
   /**
@@ -83,6 +111,6 @@ public class Runner {
     log.info("Test generation completed. {} test files: {}", testSuite.getTestFiles().size(), testSuite.getTestFiles());
 
     var testResults = orchestrator.runTests(testSuite);
-    log.info("Test execution completed. Results: {}", testResults);
+    log.info("Test execution completed. Overall results: {}. Details:\n{}", testResults, testResults.printFailedTestsNames());
   }
 }

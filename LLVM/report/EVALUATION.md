@@ -76,7 +76,7 @@ index 0704de63..a1bf0d6d 100644
 
 3. followed the project's [development environment setup](https://github.com/keepassxreboot/keepassxc/wiki/Set-up-Build-Environment-on-Linux)
 4. ensured that our patched `clang++` is "installed" (this is only in the case of a clean environment that was set up according to the `keepassxc`'s setup)
-5. followed the project's [build instructions](https://github.com/keepassxreboot/keepassxc/blob/develop/INSTALL.md#build-steps) up to the `cmake` usage
+5. followed the project's [build instructions](https://github.com/keepassxreboot/keepassxc/blob/develop/INSTALL.md#build-steps) up to (and including) the `cmake` usage
 6. run `cmake -DCMAKE_CXX_COMPILER=clang++ -DWITH_TESTS=false ../`
 7. run `make`
 

@@ -41,25 +41,25 @@ public class IndexedTrace implements Serializable {
     /**
      * Adds a captured runtime value to the trace.
      *
-     * @param slot The slot ID identifying the variable/location being tracked.
+     * @param slotId The slot ID identifying the variable/location being tracked.
      * @param eventIndex The point in the execution timeline when the value was captured.
      * @param value The runtime value (should be a primitive wrapper type).
      */
-    public void addValue(int slot, int eventIndex, Object value) {
-        traceData.computeIfAbsent(slot, k -> new TreeMap<>())
+    public void addValue(int slotId, int eventIndex, Object value) {
+        traceData.computeIfAbsent(slotId, k -> new TreeMap<>())
                  .put(eventIndex, value);
     }
     
     /**
      * Retrieves the complete history of values for a specific slot.
      *
-     * @param slot The slot ID to query.
+     * @param slotId The slot ID to query.
      * @return A NavigableMap of event indices to values, or an empty map if the slot
      *         was never tracked. The returned map is a copy and modifications won't
      *         affect the trace.
      */
-    public NavigableMap<Integer, Object> getValues(int slot) {
-        NavigableMap<Integer, Object> history = traceData.get(slot);
+    public NavigableMap<Integer, Object> getValues(int slotId) {
+        NavigableMap<Integer, Object> history = traceData.get(slotId);
         return history != null ? new TreeMap<>(history) : new TreeMap<>();
     }
     
@@ -69,7 +69,7 @@ public class IndexedTrace implements Serializable {
      * @return A set of all slot IDs. The returned set is a copy and modifications
      *         won't affect the trace.
      */
-    public Set<Integer> getAllSlots() {
+    public Set<Integer> getAllSlotIDs() {
         return new HashSet<>(traceData.keySet());
     }
     

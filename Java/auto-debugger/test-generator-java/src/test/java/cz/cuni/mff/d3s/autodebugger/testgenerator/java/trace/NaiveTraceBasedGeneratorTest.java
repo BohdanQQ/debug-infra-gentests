@@ -145,9 +145,10 @@ class NaiveTraceBasedGeneratorTest {
         assertTrue(content.contains("private com.example.Calculator calculator;"),
                   "Should contain calculator instance variable");
 
+        // PP: setUp method does not have to be generated in the current version
         // Verify setUp method
-        assertTrue(content.contains("@BeforeEach"), "Should contain @BeforeEach annotation");
-        assertTrue(content.contains("void setUp() {"), "Should contain setUp method");
+        //assertTrue(content.contains("@BeforeEach"), "Should contain @BeforeEach annotation");
+        //assertTrue(content.contains("void setUp() {"), "Should contain setUp method");
 
         // Verify test methods are generated (should have multiple scenarios)
         long testMethodCount = content.lines()
@@ -357,7 +358,7 @@ class NaiveTraceBasedGeneratorTest {
                 .namingStrategy(TestNamingStrategy.SIMPLE)
                 .build();
 
-        List<Path> generatedFiles = generator.generateTests(trace, context);
+        List<Path> generatedFiles = generator.generateTests(trace, tempDir, context);
 
         assertNotNull(generatedFiles);
         assertEquals(1, generatedFiles.size(), "Should generate exactly one test file");

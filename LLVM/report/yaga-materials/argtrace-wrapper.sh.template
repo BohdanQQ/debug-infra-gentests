@@ -1,0 +1,19 @@
+#!/bin/sh
+
+tmpfile=$(mktemp)
+printf '%s\n' "$@" > "$tmpfile"
+
+if grep -q "//PATTERN" "$tmpfile"; then
+  exec clang++ -mllvm -llcap-verbose -mllvm -llcap-mapdir=//FIXPATH/modmaps\
+  -mllvm -Arg -Xclang -load -Xclang //FIXPATH/libfn-pass.so\
+  -mllvm -llcap-fn-targets-file=//FIXPATH/selection.bin\
+  -Xclang -fpass-plugin=//FIXPATH/libfn-pass.so -fplugin=/usr/local/lib/AstMetaAdd.so\
+  -L//FIXPATH/ -lmy-hook \
+    "$@"
+else
+  exec clang++ -L//FIXPATH/ -lmy-hook "$@"
+fi
+
+rm -f "$tmpfile"
+
+

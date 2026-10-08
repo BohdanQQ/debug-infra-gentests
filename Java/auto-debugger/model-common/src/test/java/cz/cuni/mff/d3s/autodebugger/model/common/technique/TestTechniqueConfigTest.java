@@ -17,11 +17,9 @@ class TestTechniqueConfigTest {
     void givenParamsAndApiKey_whenBuild_thenAccessibleSafely() {
         var cfg = TestTechniqueConfig.builder()
                 .id("ai-assisted")
-                .param("temperature", "0.2")
                 .param("maxTokens", "2048")
                 .apiKey("secret")
                 .build();
-        assertEquals("0.2", cfg.getParameterOrDefault("temperature", "1.0"));
         assertEquals("2048", cfg.getParameterOrDefault("maxTokens", "512"));
         assertEquals("x", cfg.getParameterOrDefault("missing", "x"));
         assertEquals("secret", cfg.getApiKey());

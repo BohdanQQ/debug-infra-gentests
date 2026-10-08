@@ -51,7 +51,7 @@ public class TestGenerationContext {
      * Maximum number of tests to generate.
      */
     @Builder.Default
-    private final int maxTestCount = 50;
+    private final int maxTestCount = Integer.MAX_VALUE;
     
     /**
      * Whether to generate edge case tests.
@@ -63,7 +63,7 @@ public class TestGenerationContext {
      * Whether to generate negative test cases (testing error conditions).
      */
     @Builder.Default
-    private final boolean generateNegativeTests = true;
+    private final boolean generateNegativeTests = false;
     
     /**
      * Test naming strategy to use.

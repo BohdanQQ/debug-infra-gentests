@@ -12,9 +12,9 @@ import lombok.Getter;
 public class LLMPromptContext {
     
     /**
-     * Source code of the class containing the target method.
+     * Relevant information about source code of the class containing the target method.
      */
-    private final String sourceCode;
+    private final String sourceCodeInfo;
     
     /**
      * Target method signature for which tests are being generated.

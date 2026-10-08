@@ -32,7 +32,7 @@ public class TraceIdentifierMapper {
         );
     }
 
-    public Set<Integer> getSlots() {
+    public Set<Integer> getSlotIDs() {
         return identifierMapping.keySet();
     }
 
@@ -44,15 +44,15 @@ public class TraceIdentifierMapper {
         return value;
     }
 
-    public Set<?> getSlotValues(int slot) {
-        var type = getExportableValue(slot).getType();
+    public Set<?> getSlotValues(int slotId) {
+        var type = getExportableValue(slotId).getType();
         var getter = valueGetters.get(type);
         if (getter != null) {
-            return getter.apply(slot);
+            return getter.apply(slotId);
         } else {
             // For non-primitive types, fall back to object values
-            log.debug("Type '{}' not in primitive valueGetters, checking object values for slot {}", type, slot);
-            return trace.getObjectValues(slot);
+            log.debug("Type '{}' not in primitive valueGetters, checking object values for slot {}", type, slotId);
+            return trace.getObjectValues(slotId);
         }
     }
 }

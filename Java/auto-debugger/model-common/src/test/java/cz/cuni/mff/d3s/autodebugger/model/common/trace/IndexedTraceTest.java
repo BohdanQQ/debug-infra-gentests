@@ -185,13 +185,13 @@ class IndexedTraceTest {
         trace.addValue(10, 20, "value3");
 
         // when
-        Set<Integer> allSlots = trace.getAllSlots();
+        Set<Integer> allSlotIDs = trace.getAllSlotIDs();
 
         // then
-        assertEquals(3, allSlots.size());
-        assertTrue(allSlots.contains(1));
-        assertTrue(allSlots.contains(5));
-        assertTrue(allSlots.contains(10));
+        assertEquals(3, allSlotIDs.size());
+        assertTrue(allSlotIDs.contains(1));
+        assertTrue(allSlotIDs.contains(5));
+        assertTrue(allSlotIDs.contains(10));
     }
 
     @Test
@@ -200,11 +200,11 @@ class IndexedTraceTest {
         IndexedTrace trace = new IndexedTrace();
 
         // when
-        Set<Integer> allSlots = trace.getAllSlots();
+        Set<Integer> allSlotIDs = trace.getAllSlotIDs();
 
         // then
-        assertNotNull(allSlots);
-        assertTrue(allSlots.isEmpty());
+        assertNotNull(allSlotIDs);
+        assertTrue(allSlotIDs.isEmpty());
     }
 
     @Test
@@ -277,11 +277,11 @@ class IndexedTraceTest {
         trace.addValue(1, 0, "value");
 
         // when - modify returned set
-        Set<Integer> slots = trace.getAllSlots();
-        slots.add(999);
+        Set<Integer> slotIDs = trace.getAllSlotIDs();
+        slotIDs.add(999);
 
         // then - original trace should be unaffected
-        Set<Integer> freshSlots = trace.getAllSlots();
+        Set<Integer> freshSlots = trace.getAllSlotIDs();
         assertEquals(1, freshSlots.size());
         assertFalse(freshSlots.contains(999));
     }
